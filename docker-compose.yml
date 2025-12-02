@@ -1,0 +1,61 @@
+version: '3.8'
+
+services:
+  mongodb:
+    image: mongo:latest
+    container_name: tokenworkshop-mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    environment:
+      - MONGO_INITDB_DATABASE=tokenworkshop
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mysql:
+    image: mysql:8
+    container_name: tokenworkshop-mysql
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    environment:
+      - MYSQL_ROOT_PASSWORD=password
+      - MYSQL_DATABASE=tokenworkshop
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  overlay:
+    build: .
+    container_name: tokenworkshop-overlay
+    ports:
+      - "8080:8080"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+    environment:
+      - NODE_NAME=${NODE_NAME:-tokenworkshop}
+      - SERVER_PRIVATE_KEY=${SERVER_PRIVATE_KEY}
+      - HOSTING_URL=${HOSTING_URL:-http://localhost:8080}
+      - ADMIN_TOKEN=${ADMIN_TOKEN:-admin}
+      - MONGO_URL=mongodb://mongodb:27017/tokenworkshop
+      - KNEX_URL=mysql://root:password@mysql:3306/tokenworkshop
+      - NETWORK=${NETWORK:-test}
+      - ARC_API_KEY=${ARC_API_KEY}
+    volumes:
+      - ./src:/app/src
+      - ./node_modules:/app/node_modules
+    command: npm run dev
+
+volumes:
+  mongodb_data:
+  mysql_data:

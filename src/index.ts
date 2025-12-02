@@ -1,0 +1,84 @@
+import 'dotenv/config'
+import OverlayExpress from '@bsv/overlay-express'
+import TokenTopicManager from './services/token/TokenTopicManager.js'
+import createTokenLookupService from './services/token/TokenLookupService.js'
+
+const {
+  NODE_NAME = 'tokenworkshop',
+  SERVER_PRIVATE_KEY,
+  HOSTING_URL = 'http://localhost:8080',
+  ADMIN_TOKEN = 'admin',
+  MONGO_URL = 'mongodb://localhost:27017/tokenworkshop',
+  KNEX_URL = 'mysql://root:password@localhost:3306/tokenworkshop'
+} = process.env
+
+if (!SERVER_PRIVATE_KEY) {
+  throw new Error('SERVER_PRIVATE_KEY environment variable is required')
+}
+
+async function main() {
+  console.log('🚀 Starting Tokenisation Workshop Overlay Server...')
+
+  // Create OverlayExpress server
+  const server = new OverlayExpress(
+    NODE_NAME,
+    SERVER_PRIVATE_KEY,
+    HOSTING_URL,
+    ADMIN_TOKEN
+  )
+
+  // Configure port (from HOSTING_URL or default 8080)
+  const port = new URL(HOSTING_URL).port || '8080'
+  server.configurePort(Number(port))
+
+  // Configure databases using OverlayExpress methods
+  await server.configureKnex(KNEX_URL)
+  console.log('✓ MySQL/Knex connected')
+
+  await server.configureMongo(MONGO_URL)
+  console.log('✓ MongoDB connected')
+
+  // Register Token Service
+  server.configureTopicManager('tm_tokens', new TokenTopicManager())
+  server.configureLookupServiceWithMongo('ls_tokens', createTokenLookupService)
+
+  console.log('✓ Token service registered')
+
+  // Disable GASP sync for simple workshop setup
+  server.configureEnableGASPSync(false)
+
+  // Configure the overlay engine
+  await server.configureEngine()
+
+  // Add custom endpoint for health check
+  server.app.get('/health', async (req, res) => {
+    res.json({
+      status: 'healthy',
+      node: NODE_NAME,
+      services: ['tokens'],
+      timestamp: new Date().toISOString()
+    })
+  })
+
+  // Start the server
+  await server.start()
+
+  console.log(`
+✨ Tokenisation Workshop Server Running!
+
+🌐 Overlay URL: ${HOSTING_URL}
+📦 Node Name: ${NODE_NAME}
+🎯 Services: Token Mint & Wallet
+
+Available Services:
+  - Token Topic Manager: tm_tokens
+  - Token Lookup Service: ls_tokens
+
+Health Check: ${HOSTING_URL}/health
+`)
+}
+
+main().catch(error => {
+  console.error('Failed to start server:', error)
+  process.exit(1)
+})
