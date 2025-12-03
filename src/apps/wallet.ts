@@ -19,7 +19,11 @@ interface TokenBalance {
   symbol?: string
   decimals?: number
   totalAmount: number
-  utxoCount: number
+  utxos?: Array<{
+    txid: string
+    outputIndex: number
+    amount: number
+  }>
 }
 
 interface TokenUTXO {
@@ -92,7 +96,9 @@ class WalletApp {
    */
   async getBalances(): Promise<TokenBalance[]> {
     try {
-      const response = await fetch(`${this.overlayUrl}/token-balances`)
+      // Filter by this wallet's identity key
+      const url = `${this.overlayUrl}/token-balances?ownerKey=${this.identityKey}`
+      const response = await fetch(url)
 
       if (!response.ok) {
         throw new Error(`Lookup failed: ${response.statusText}`)
@@ -150,7 +156,7 @@ class WalletApp {
       console.log(`Token: ${balance.name || 'Unknown'} (${balance.symbol || 'N/A'})`)
       console.log(`  ID: ${balance.tokenId}`)
       console.log(`  Balance: ${displayAmount.toLocaleString()}`)
-      console.log(`  UTXOs: ${balance.utxoCount}`)
+      console.log(`  UTXOs: ${balance.utxos?.length || 0}`)
       console.log(`  Decimals: ${balance.decimals || 0}`)
       console.log()
     }
@@ -162,6 +168,7 @@ class WalletApp {
   createTransferScript(
     tokenId: string,
     amount: number,
+    recipientKey: string,
     metadata?: any
   ): Script {
     // Convert amount to 8-byte little-endian buffer
@@ -175,7 +182,8 @@ class WalletApp {
     const fields = [
       Utils.toArray('TOKEN', 'utf8'),
       Utils.toArray(tokenId, 'hex'),
-      amountBuffer
+      amountBuffer,
+      Utils.toArray(recipientKey, 'hex')  // Add recipient/owner field
     ]
 
     if (metadata) {
@@ -219,16 +227,16 @@ class WalletApp {
     const outputs = []
 
     // Recipient's token output
-    const recipientScript = this.createTransferScript(tokenId, amount)
+    const recipientScript = this.createTransferScript(tokenId, amount, recipientAddress)
     outputs.push({
       lockingScript: recipientScript.toHex(),
       satoshis: 1, // Minimum 1 satoshi for OP_RETURN outputs
       outputDescription: 'Token transfer output'
     })
 
-    // Change output if needed
+    // Change output if needed (back to sender)
     if (change > 0) {
-      const changeScript = this.createTransferScript(tokenId, change)
+      const changeScript = this.createTransferScript(tokenId, change, this.identityKey!)
       outputs.push({
         lockingScript: changeScript.toHex(),
         satoshis: 1, // Minimum 1 satoshi for OP_RETURN outputs

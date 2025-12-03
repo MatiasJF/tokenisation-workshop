@@ -11,6 +11,7 @@ export interface TokenRecord {
   satoshis: number
   createdAt: Date
   spent: boolean
+  ownerKey?: string  // Identity key of token owner
 }
 
 export interface TokenBalance {
@@ -45,6 +46,7 @@ export default class TokenStorageManager {
     await this.collection.createIndex({ tokenId: 1 })
     await this.collection.createIndex({ tokenId: 1, spent: 1 })
     await this.collection.createIndex({ spent: 1 })
+    await this.collection.createIndex({ ownerKey: 1, spent: 1 })
   }
 
   /**
@@ -57,7 +59,8 @@ export default class TokenStorageManager {
     amount: number,
     metadata: any,
     lockingScript: string,
-    satoshis: number
+    satoshis: number,
+    ownerKey?: string
   ): Promise<void> {
     await this.collection.insertOne({
       txid,
@@ -68,7 +71,8 @@ export default class TokenStorageManager {
       lockingScript,
       satoshis,
       createdAt: new Date(),
-      spent: false
+      spent: false,
+      ownerKey
     })
   }
 
@@ -125,13 +129,20 @@ export default class TokenStorageManager {
 
   /**
    * Get all token balances (grouped by tokenId)
+   * @param ownerKey Optional filter by owner's identity key
    */
-  async getAllBalances(): Promise<TokenBalance[]> {
-    console.log('🗄️ [STORAGE] getAllBalances called')
+  async getAllBalances(ownerKey?: string): Promise<TokenBalance[]> {
+    console.log('🗄️ [STORAGE] getAllBalances called', ownerKey ? `for owner: ${ownerKey}` : '(all owners)')
     console.log('🗄️ [STORAGE] Querying collection:', this.collection.collectionName)
     console.log('🗄️ [STORAGE] Database:', this.db.databaseName)
+
+    const query: any = { spent: false }
+    if (ownerKey) {
+      query.ownerKey = ownerKey
+    }
+
     const records = await this.collection
-      .find({ spent: false })
+      .find(query)
       .toArray()
     console.log('🗄️ [STORAGE] Found records:', records.length)
 

@@ -40,6 +40,13 @@ async function main() {
   await server.configureMongo(MONGO_URL)
   console.log('✓ MongoDB connected')
 
+  // Create persistent MongoDB client for custom endpoints
+  const persistentMongoClient = new MongoClient(MONGO_URL)
+  await persistentMongoClient.connect()
+  const dbName = MONGO_URL.split('/').pop()?.split('?')[0] || 'tokenworkshop'
+  const lookupDbName = `${dbName}_lookup_services`
+  const persistentDb = persistentMongoClient.db(lookupDbName)
+
   // Register Token Service
   server.configureTopicManager('tm_tokens', new TokenTopicManager())
   server.configureLookupServiceWithMongo('ls_tokens', createTokenLookupService)
@@ -65,19 +72,11 @@ async function main() {
   // Add custom endpoint for token balances (bypasses overlay engine enrichment)
   server.app.get('/token-balances', async (req, res) => {
     try {
-      // Connect to MongoDB directly to bypass overlay engine BEEF enrichment
-      const client = new MongoClient(MONGO_URL)
-      await client.connect()
+      const ownerKey = req.query.ownerKey as string | undefined
 
-      // Parse database name from MONGO_URL
-      const dbName = MONGO_URL.split('/').pop()?.split('?')[0] || 'tokenworkshop'
-      const lookupDbName = `${dbName}_lookup_services`
+      const storage = new TokenStorageManager(persistentDb)
+      const balances = await storage.getAllBalances(ownerKey)
 
-      const db = client.db(lookupDbName)
-      const storage = new TokenStorageManager(db)
-      const balances = await storage.getAllBalances()
-
-      await client.close()
       res.json(balances)
     } catch (error: any) {
       console.error('Error in /token-balances:', error)
@@ -90,19 +89,8 @@ async function main() {
     try {
       const { tokenId } = req.params
 
-      // Connect to MongoDB directly to bypass overlay engine BEEF enrichment
-      const client = new MongoClient(MONGO_URL)
-      await client.connect()
-
-      // Parse database name from MONGO_URL
-      const dbName = MONGO_URL.split('/').pop()?.split('?')[0] || 'tokenworkshop'
-      const lookupDbName = `${dbName}_lookup_services`
-
-      const db = client.db(lookupDbName)
-      const storage = new TokenStorageManager(db)
+      const storage = new TokenStorageManager(persistentDb)
       const records = await storage.findUnspentByTokenId(tokenId)
-
-      await client.close()
 
       // Map to UTXO format expected by wallet
       const utxos = records.map(r => ({

@@ -107,6 +107,7 @@ class MintApp {
       Utils.toArray('TOKEN', 'utf8'),           // Protocol
       Utils.toArray(tokenId, 'hex'),            // Token ID (32 bytes)
       amountBuffer,                             // Amount (8 bytes)
+      Utils.toArray(this.identityKey || '', 'hex'),  // Owner (minter's identity key)
       Utils.toArray(JSON.stringify(metadata), 'utf8')  // Metadata
     ]
 

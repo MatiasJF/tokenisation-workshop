@@ -35,11 +35,14 @@ class TokenLookupService implements LookupService {
       const amountBuffer = result.fields[2] as number[]
       const amount = this.parseAmount(amountBuffer)
 
-      // Parse metadata if present
+      // Parse owner (field 3)
+      const ownerKey = result.fields.length >= 4 ? Utils.toHex(result.fields[3] as number[]) : undefined
+
+      // Parse metadata if present (field 4)
       let metadata = undefined
-      if (result.fields.length >= 4) {
+      if (result.fields.length >= 5) {
         try {
-          const metadataStr = Utils.toUTF8(result.fields[3] as number[])
+          const metadataStr = Utils.toUTF8(result.fields[4] as number[])
           metadata = JSON.parse(metadataStr)
         } catch {
           // Ignore invalid metadata
@@ -54,7 +57,8 @@ class TokenLookupService implements LookupService {
         amount,
         metadata,
         output.lockingScript.toHex(),
-        output.satoshis || 0
+        output.satoshis || 0,
+        ownerKey
       )
 
       console.log(`✓ Token admitted: ${tokenId} amount=${amount}`)
