@@ -92,21 +92,13 @@ class WalletApp {
    */
   async getBalances(): Promise<TokenBalance[]> {
     try {
-      const response = await fetch(`${this.overlayUrl}/lookup`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          service: 'ls_tokens',
-          query: { type: 'balances' }
-        })
-      })
+      const response = await fetch(`${this.overlayUrl}/token-balances`)
 
       if (!response.ok) {
         throw new Error(`Lookup failed: ${response.statusText}`)
       }
 
       const result = await response.json()
-      // Overlay returns array directly now
       return Array.isArray(result) ? result : []
     } catch (error) {
       console.error('Error fetching balances:', error)

@@ -2,6 +2,8 @@ import 'dotenv/config'
 import OverlayExpress from '@bsv/overlay-express'
 import TokenTopicManager from './services/token/TokenTopicManager.js'
 import createTokenLookupService from './services/token/TokenLookupService.js'
+import TokenStorageManager from './services/token/TokenStorageManager.js'
+import { MongoClient } from 'mongodb'
 
 const {
   NODE_NAME = 'tokenworkshop',
@@ -58,6 +60,29 @@ async function main() {
       services: ['tokens'],
       timestamp: new Date().toISOString()
     })
+  })
+
+  // Add custom endpoint for token balances (bypasses overlay engine enrichment)
+  server.app.get('/token-balances', async (req, res) => {
+    try {
+      // Connect to MongoDB directly to bypass overlay engine BEEF enrichment
+      const client = new MongoClient(MONGO_URL)
+      await client.connect()
+
+      // Parse database name from MONGO_URL
+      const dbName = MONGO_URL.split('/').pop()?.split('?')[0] || 'tokenworkshop'
+      const lookupDbName = `${dbName}_lookup_services`
+
+      const db = client.db(lookupDbName)
+      const storage = new TokenStorageManager(db)
+      const balances = await storage.getAllBalances()
+
+      await client.close()
+      res.json(balances)
+    } catch (error: any) {
+      console.error('Error in /token-balances:', error)
+      res.status(500).json({ error: error.message })
+    }
   })
 
   // Start the server

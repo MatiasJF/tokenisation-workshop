@@ -33,7 +33,10 @@ export default class TokenStorageManager {
   private readonly collection: Collection<TokenRecord>
 
   constructor(private readonly db: Db) {
+    console.log('🗄️ [STORAGE] Initializing TokenStorageManager')
+    console.log('🗄️ [STORAGE] Database name:', db.databaseName)
     this.collection = db.collection<TokenRecord>('tokens')
+    console.log('🗄️ [STORAGE] Collection: tokens')
     this.ensureIndexes()
   }
 
@@ -124,9 +127,13 @@ export default class TokenStorageManager {
    * Get all token balances (grouped by tokenId)
    */
   async getAllBalances(): Promise<TokenBalance[]> {
+    console.log('🗄️ [STORAGE] getAllBalances called')
+    console.log('🗄️ [STORAGE] Querying collection:', this.collection.collectionName)
+    console.log('🗄️ [STORAGE] Database:', this.db.databaseName)
     const records = await this.collection
       .find({ spent: false })
       .toArray()
+    console.log('🗄️ [STORAGE] Found records:', records.length)
 
     // Group by tokenId
     const balanceMap = new Map<string, TokenRecord[]>()

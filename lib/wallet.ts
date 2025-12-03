@@ -16,7 +16,6 @@ export const useWallet = () => {
       console.error('Wallet connection error:', error)
     }
   }
-
   useEffect(() => {
     initWallet()
   }, [])
