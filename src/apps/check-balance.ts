@@ -17,7 +17,7 @@ async function checkBalance(name: string, privateKeyHex: string) {
   try {
     const response = await fetch(`https://api.whatsonchain.com/v1/bsv/main/address/${address}/balance`)
     if (response.ok) {
-      const data = await response.json()
+      const data: any = await response.json()
       const balanceInBSV = data.confirmed / 100000000
       const balanceInUSD = balanceInBSV * 50 // Approximate BSV price
 

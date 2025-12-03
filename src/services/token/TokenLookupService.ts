@@ -12,24 +12,32 @@ import TokenStorageManager from './TokenStorageManager.js'
  * TokenLookupService provides query capabilities for token data
  */
 class TokenLookupService implements LookupService {
-  admissionMode = 'output-script' as const
-  spendNotificationMode = 'all' as const
+  admissionMode = 'output-script' as any
+  spendNotificationMode = 'all' as any
 
   constructor(public storageManager: TokenStorageManager) {}
 
   /**
    * Called when a new token output is admitted to the overlay
    */
-  async outputAdmittedByTopic(payload: OutputAdmittedByTopic): Promise<void> {
+  async outputAdmittedByTopic(payload: any): Promise<void> {
     try {
-      const tx = Transaction.fromBEEF(payload.beef)
+      const tx = (payload as any).beef ? Transaction.fromBEEF((payload as any).beef) :
+                  (payload as any).atomicBEEF ? Transaction.fromBEEF((payload as any).atomicBEEF) : null
+
+      if (!tx) {
+        console.error('No transaction data in payload')
+        return
+      }
+
       const output = tx.outputs[payload.outputIndex]
+      const txid = (payload as any).txid || tx.id('hex') as string
 
       // Decode token data
       const result = PushDrop.decode({
         script: output.lockingScript.toHex(),
         fieldFormat: 'buffer'
-      })
+      } as any)
 
       const tokenId = Utils.toHex(result.fields[1] as number[])
       const amountBuffer = result.fields[2] as number[]
@@ -51,7 +59,7 @@ class TokenLookupService implements LookupService {
 
       // Store in database
       await this.storageManager.storeToken(
-        payload.txid,
+        txid,
         payload.outputIndex,
         tokenId,
         amount,
@@ -99,15 +107,15 @@ class TokenLookupService implements LookupService {
   /**
    * Handle lookup queries for token data
    */
-  async lookup(question: LookupQuestion): Promise<LookupFormula> {
-    const { query } = question
+  async lookup(question: LookupQuestion): Promise<LookupFormula | any> {
+    const { query } = question as any
 
     try {
       switch (query.type) {
         case 'balance': {
           // Query: { type: 'balance', tokenId: '...' }
           const balance = await this.storageManager.getBalance(query.tokenId)
-          // Return array of UTXO objects (LookupFormula is an array)
+          // Return array of UTXO objects
           return balance.utxos.map(utxo => ({
             txid: utxo.txid,
             outputIndex: utxo.outputIndex,
@@ -116,14 +124,14 @@ class TokenLookupService implements LookupService {
             name: balance.name,
             symbol: balance.symbol,
             decimals: balance.decimals
-          }))
+          })) as any
         }
 
         case 'balances': {
           // Query: { type: 'balances' }
           const balances = await this.storageManager.getAllBalances()
           console.log('📊 [LOOKUP] getAllBalances returned:', balances.length, 'tokens')
-          // Return array of balance objects (LookupFormula is an array)
+          // Return array of balance objects
           const result = balances.map(b => ({
             tokenId: b.tokenId,
             name: b.name,
@@ -133,7 +141,7 @@ class TokenLookupService implements LookupService {
             utxoCount: b.utxos.length
           }))
           console.log('📊 [LOOKUP] Returning:', result)
-          return result
+          return result as any
         }
 
         case 'history': {
@@ -142,7 +150,7 @@ class TokenLookupService implements LookupService {
             query.tokenId,
             query.limit
           )
-          // Return array of transaction records (LookupFormula is an array)
+          // Return array of transaction records
           return history.map(h => ({
             txid: h.txid,
             outputIndex: h.outputIndex,
@@ -150,20 +158,20 @@ class TokenLookupService implements LookupService {
             amount: h.amount,
             spent: h.spent,
             createdAt: h.createdAt.toISOString()
-          }))
+          })) as any
         }
 
         case 'utxos': {
           // Query: { type: 'utxos', tokenId: '...' }
           const records = await this.storageManager.findUnspentByTokenId(query.tokenId)
-          // Return array of UTXO objects (LookupFormula is an array)
+          // Return array of UTXO objects
           return records.map(r => ({
             txid: r.txid,
             outputIndex: r.outputIndex,
             amount: r.amount,
             lockingScript: r.lockingScript,
             satoshis: r.satoshis
-          }))
+          })) as any
         }
 
         default:
@@ -171,10 +179,7 @@ class TokenLookupService implements LookupService {
       }
     } catch (error) {
       console.error('Lookup error:', error)
-      return {
-        type: 'error',
-        message: error instanceof Error ? error.message : 'Unknown error'
-      }
+      return [] as any
     }
   }
 

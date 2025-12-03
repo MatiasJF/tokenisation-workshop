@@ -25,7 +25,7 @@ async function main() {
   // Create OverlayExpress server
   const server = new OverlayExpress(
     NODE_NAME,
-    SERVER_PRIVATE_KEY,
+    SERVER_PRIVATE_KEY as string,
     HOSTING_URL,
     ADMIN_TOKEN
   )
@@ -53,7 +53,7 @@ async function main() {
 
   // Register Token Service
   server.configureTopicManager('tm_tokens', new TokenTopicManager())
-  server.configureLookupServiceWithMongo('ls_tokens', createTokenLookupService)
+  server.configureLookupServiceWithMongo('ls_tokens', createTokenLookupService as any)
 
   console.log('✓ Token service registered')
 

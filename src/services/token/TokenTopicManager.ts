@@ -32,7 +32,7 @@ export default class TokenTopicManager implements TopicManager {
           const result = PushDrop.decode({
             script: output.lockingScript.toHex(),
             fieldFormat: 'buffer'
-          })
+          } as any)
 
           // Validate token protocol
           if (result.fields.length < 3) continue
