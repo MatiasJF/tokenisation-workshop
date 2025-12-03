@@ -111,21 +111,13 @@ class WalletApp {
    */
   async getTokenUTXOs(tokenId: string): Promise<TokenUTXO[]> {
     try {
-      const response = await fetch(`${this.overlayUrl}/lookup`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          service: 'ls_tokens',
-          query: { type: 'utxos', tokenId }
-        })
-      })
+      const response = await fetch(`${this.overlayUrl}/token-utxos/${tokenId}`)
 
       if (!response.ok) {
         throw new Error(`Lookup failed: ${response.statusText}`)
       }
 
       const result = await response.json()
-      // Overlay returns array directly now
       return Array.isArray(result) ? result : []
     } catch (error) {
       console.error('Error fetching UTXOs:', error)

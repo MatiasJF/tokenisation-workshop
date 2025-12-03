@@ -85,6 +85,41 @@ async function main() {
     }
   })
 
+  // Add custom endpoint for token UTXOs (bypasses overlay engine enrichment)
+  server.app.get('/token-utxos/:tokenId', async (req, res) => {
+    try {
+      const { tokenId } = req.params
+
+      // Connect to MongoDB directly to bypass overlay engine BEEF enrichment
+      const client = new MongoClient(MONGO_URL)
+      await client.connect()
+
+      // Parse database name from MONGO_URL
+      const dbName = MONGO_URL.split('/').pop()?.split('?')[0] || 'tokenworkshop'
+      const lookupDbName = `${dbName}_lookup_services`
+
+      const db = client.db(lookupDbName)
+      const storage = new TokenStorageManager(db)
+      const records = await storage.findUnspentByTokenId(tokenId)
+
+      await client.close()
+
+      // Map to UTXO format expected by wallet
+      const utxos = records.map(r => ({
+        txid: r.txid,
+        outputIndex: r.outputIndex,
+        amount: r.amount,
+        lockingScript: r.lockingScript,
+        satoshis: r.satoshis
+      }))
+
+      res.json(utxos)
+    } catch (error: any) {
+      console.error('Error in /token-utxos:', error)
+      res.status(500).json({ error: error.message })
+    }
+  })
+
   // Start the server
   await server.start()
 
