@@ -62,12 +62,25 @@ export default class TokenStorageManager {
     satoshis: number,
     ownerKey?: string
   ): Promise<void> {
+    // If metadata is not provided, try to inherit from an existing token with same tokenId
+    let finalMetadata = metadata
+    if (!metadata || !metadata.name) {
+      const existingToken = await this.collection.findOne({
+        tokenId,
+        metadata: { $exists: true, $ne: null }
+      })
+      if (existingToken && existingToken.metadata) {
+        finalMetadata = existingToken.metadata
+        console.log(`🔄 [STORAGE] Inherited metadata for token ${tokenId}: ${existingToken.metadata.name}`)
+      }
+    }
+
     await this.collection.insertOne({
       txid,
       outputIndex,
       tokenId,
       amount,
-      metadata,
+      metadata: finalMetadata,
       lockingScript,
       satoshis,
       createdAt: new Date(),
