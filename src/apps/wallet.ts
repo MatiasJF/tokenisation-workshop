@@ -198,6 +198,58 @@ class WalletApp {
   }
 
   /**
+   * Submit transaction to overlay server for indexing
+   */
+  async submitToOverlay(txid: string): Promise<void> {
+    try {
+      console.log('\n📤 Submitting transaction to overlay server...')
+      console.log('   Waiting for transaction to be confirmed...')
+
+      // Retry up to 6 times (30 seconds total)
+      let txFound = false
+      for (let attempt = 1; attempt <= 6; attempt++) {
+        await new Promise(resolve => setTimeout(resolve, 5000))
+
+        console.log(`   Attempt ${attempt}/6: Checking blockchain...`)
+        const wocResponse = await fetch(`https://api.whatsonchain.com/v1/bsv/main/tx/${txid}/hex`)
+
+        if (wocResponse.ok) {
+          txFound = true
+          console.log('   ✓ Transaction confirmed on blockchain')
+          break
+        } else if (attempt < 6) {
+          console.log(`   Transaction not yet available, waiting...`)
+        }
+      }
+
+      if (!txFound) {
+        throw new Error('Transaction not found on WhatsOnChain after 30 seconds')
+      }
+
+      // Submit to overlay using direct endpoint
+      console.log('   Submitting to overlay...')
+      const response = await fetch(`${this.overlayUrl}/submit-token`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ txid })
+      })
+
+      if (!response.ok) {
+        const error: any = await response.json()
+        throw new Error(error.error || 'Overlay submission failed')
+      }
+
+      const result: any = await response.json()
+      console.log(`   ✅ Transaction indexed: ${result.tokensFound} token output(s) stored`)
+    } catch (error: any) {
+      console.warn(`   ⚠️  Could not submit to overlay: ${error.message}`)
+      console.warn(`   You may need to restart the overlay server or check the logs`)
+    }
+  }
+
+  /**
    * Transfer tokens to another address using BSV Desktop Wallet
    */
   async transfer(tokenId: string, amount: number, recipientAddress: string) {
@@ -253,6 +305,9 @@ class WalletApp {
     console.log('   Requesting transaction from wallet...')
     const createResult = await this.wallet.createAction({
       outputs,
+      options: {
+        randomizeOutputs: false
+      },
       description: `Transfer ${amount} tokens`
       // Wallet will automatically select UTXOs to fund transaction + outputs
     })
@@ -267,6 +322,9 @@ class WalletApp {
       // Show blockchain explorer link
       const explorerUrl = `https://whatsonchain.com/tx/${createResult.txid}`
       console.log(`   Explorer: ${explorerUrl}`)
+
+      // Submit to overlay
+      await this.submitToOverlay(createResult.txid)
 
       return {
         txid: createResult.txid,
@@ -296,6 +354,9 @@ class WalletApp {
         // Show blockchain explorer link
         const explorerUrl = `https://whatsonchain.com/tx/${txid}`
         console.log(`   Explorer: ${explorerUrl}`)
+
+        // Submit to overlay
+        await this.submitToOverlay(txid)
 
         return {
           txid,

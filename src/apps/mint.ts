@@ -10,7 +10,8 @@ import { stdin as input, stdout as output } from 'process'
 
 const {
   IDENTITY_KEY,
-  ORIGINATOR = 'tokenisation-workshop.local'
+  ORIGINATOR = 'tokenisation-workshop.local',
+  OVERLAY_URL = 'http://localhost:8080'
 } = process.env
 
 interface TokenMetadata {
@@ -146,6 +147,9 @@ class MintApp {
           outputDescription: 'Token mint output'
         }
       ],
+      options: {
+        randomizeOutputs: false
+      },
       description: `Mint ${metadata.name} (${metadata.symbol})`
       // Wallet will automatically select UTXOs to fund transaction + outputs
     })
@@ -162,6 +166,9 @@ class MintApp {
       // Show blockchain explorer link
       const explorerUrl = `https://whatsonchain.com/tx/${txid}`
       console.log(`   Explorer: ${explorerUrl}`)
+
+      // Submit to overlay
+      await this.submitToOverlay(txid)
 
       return {
         txid,
@@ -191,6 +198,9 @@ class MintApp {
       const explorerUrl = `https://whatsonchain.com/tx/${txid}`
       console.log(`   Explorer: ${explorerUrl}`)
 
+      // Submit to overlay
+      await this.submitToOverlay(txid)
+
       return {
         txid,
         tokenId,
@@ -198,6 +208,58 @@ class MintApp {
       }
     } else {
       throw new Error('Unexpected createAction result: no txid or signableTransaction')
+    }
+  }
+
+  /**
+   * Submit transaction to overlay server for indexing
+   */
+  async submitToOverlay(txid: string): Promise<void> {
+    try {
+      console.log('\n📤 Submitting transaction to overlay server...')
+      console.log('   Waiting for transaction to be confirmed...')
+
+      // Retry up to 6 times (30 seconds total)
+      let txFound = false
+      for (let attempt = 1; attempt <= 6; attempt++) {
+        await new Promise(resolve => setTimeout(resolve, 5000))
+
+        console.log(`   Attempt ${attempt}/6: Checking blockchain...`)
+        const wocResponse = await fetch(`https://api.whatsonchain.com/v1/bsv/main/tx/${txid}/hex`)
+
+        if (wocResponse.ok) {
+          txFound = true
+          console.log('   ✓ Transaction confirmed on blockchain')
+          break
+        } else if (attempt < 6) {
+          console.log(`   Transaction not yet available, waiting...`)
+        }
+      }
+
+      if (!txFound) {
+        throw new Error('Transaction not found on WhatsOnChain after 30 seconds')
+      }
+
+      // Submit to overlay using direct endpoint
+      console.log('   Submitting to overlay...')
+      const response = await fetch(`${OVERLAY_URL}/submit-token`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ txid })
+      })
+
+      if (!response.ok) {
+        const error = await response.json() as { error?: string }
+        throw new Error(error.error || 'Overlay submission failed')
+      }
+
+      const result = await response.json() as { tokensFound: number }
+      console.log(`   ✅ Transaction indexed: ${result.tokensFound} token output(s) stored`)
+    } catch (error: any) {
+      console.warn(`   ⚠️  Could not submit to overlay: ${error.message}`)
+      console.warn(`   You may need to restart the overlay server or check the logs`)
     }
   }
 
