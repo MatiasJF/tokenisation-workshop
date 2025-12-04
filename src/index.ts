@@ -4,6 +4,7 @@ import TokenTopicManager from './services/token/TokenTopicManager.js'
 import createTokenLookupService from './services/token/TokenLookupService.js'
 import TokenStorageManager from './services/token/TokenStorageManager.js'
 import { MongoClient } from 'mongodb'
+import { PushDrop } from '@bsv/sdk'
 
 const {
   NODE_NAME = 'tokenworkshop',
@@ -148,112 +149,80 @@ async function main() {
 
       for (let outputIndex = 0; outputIndex < tx.outputs.length; outputIndex++) {
         const output = tx.outputs[outputIndex]
-        const script = output.lockingScript
 
-        // Check if it's an OP_RETURN with our token protocol
-        // OP_RETURN can be with or without OP_FALSE prefix
-        const isOpReturn = (script.chunks[0]?.op === 106) || // Just OP_RETURN
-                          (script.chunks[0]?.op === 0 && script.chunks[1]?.op === 106) // OP_FALSE OP_RETURN
+        try {
+          // Try to decode as PushDrop token
+          const result = PushDrop.decode({
+            script: output.lockingScript.toHex(),
+            fieldFormat: 'buffer'
+          } as any)
 
-        if (isOpReturn) {
-          try {
-            // Get the full script and parse manually
-            // Skip OP_FALSE (if present) and OP_RETURN to get to data
-            const scriptHex = output.lockingScript.toHex()
-            let dataHex = scriptHex
+          // Validate PushDrop token format
+          // Field 0: lockingKey (33 bytes)
+          // Field 1: protocol ('TOKEN')
+          // Field 2: tokenId (32 bytes)
+          // Field 3: amount (8 bytes)
+          // Field 4: ownerKey (33 bytes)
+          // Field 5: metadata (optional JSON)
+          if (result.fields.length < 5) continue
 
-            // Remove OP_FALSE (00) if present
-            if (dataHex.startsWith('00')) {
-              dataHex = dataHex.slice(2)
-            }
-            // Remove OP_RETURN (6a)
-            if (dataHex.startsWith('6a')) {
-              dataHex = dataHex.slice(2)
-            }
+          const lockingKey = Utils.toHex(result.fields[0] as number[])
+          const protocol = Utils.toUTF8(result.fields[1] as number[])
 
-            // Parse push data fields manually
-            const fields: number[][] = []
-            let pos = 0
-            while (pos < dataHex.length) {
-              const opcode = parseInt(dataHex.slice(pos, pos + 2), 16)
-              pos += 2
+          if (protocol !== 'TOKEN') continue
+          if (lockingKey.length !== 66) continue // 33 bytes = 66 hex chars
 
-              if (opcode >= 1 && opcode <= 75) {
-                // Direct push of N bytes
-                const fieldHex = dataHex.slice(pos, pos + opcode * 2)
-                const fieldBytes = []
-                for (let i = 0; i < fieldHex.length; i += 2) {
-                  fieldBytes.push(parseInt(fieldHex.slice(i, i + 2), 16))
-                }
-                fields.push(fieldBytes)
-                pos += opcode * 2
-              } else if (opcode === 76) {
-                // OP_PUSHDATA1
-                const len = parseInt(dataHex.slice(pos, pos + 2), 16)
-                pos += 2
-                const fieldHex = dataHex.slice(pos, pos + len * 2)
-                const fieldBytes = []
-                for (let i = 0; i < fieldHex.length; i += 2) {
-                  fieldBytes.push(parseInt(fieldHex.slice(i, i + 2), 16))
-                }
-                fields.push(fieldBytes)
-                pos += len * 2
-              } else {
-                break
-              }
-            }
+          const tokenId = Utils.toHex(result.fields[2] as number[])
+          if (tokenId.length !== 64) continue // 32 bytes = 64 hex chars
 
-            // Check if first field is 'TOKEN'
-            if (fields.length >= 3) {
-              const protocol = Utils.toUTF8(fields[0] as number[])
+          // Parse amount (8-byte little-endian)
+          const amountBytes = result.fields[3] as number[]
+          if (amountBytes.length !== 8) continue
 
-              if (protocol === 'TOKEN') {
-                const tokenId = Utils.toHex(fields[1] as number[])
-
-                // Parse amount (8-byte little-endian)
-                const amountBytes = fields[2] as number[]
-                let amount = 0
-                for (let i = 0; i < Math.min(8, amountBytes.length); i++) {
-                  amount += amountBytes[i] * Math.pow(256, i)
-                }
-
-                // Parse owner (field 3)
-                const ownerKey = fields.length >= 4 ? Utils.toHex(fields[3] as number[]) : undefined
-
-                // Parse metadata if present (field 4)
-                let metadata = undefined
-                if (fields.length >= 5) {
-                  try {
-                    const metadataStr = Utils.toUTF8(fields[4] as number[])
-                    metadata = JSON.parse(metadataStr)
-                  } catch {
-                    // Ignore invalid metadata
-                  }
-                }
-
-                console.log(`   ✓ Found token output at index ${outputIndex}:`)
-                console.log(`     Token ID: ${tokenId}`)
-                console.log(`     Amount: ${amount}`)
-                console.log(`     Owner: ${ownerKey || 'none'}`)
-
-                // Store in database
-                await storage.storeToken(
-                  txid,
-                  outputIndex,
-                  tokenId,
-                  amount,
-                  metadata,
-                  output.lockingScript.toHex(),
-                  output.satoshis || 0,
-                  ownerKey
-                )
-
-                tokensFound++
-              }
-            }
-          } catch (parseError: any) {
-            console.log(`   ⚠️  Could not parse output ${outputIndex}: ${parseError.message}`)
+          let amount = 0
+          for (let i = 0; i < 8; i++) {
+            amount += amountBytes[i] * Math.pow(256, i)
           }
+
+          if (amount <= 0) continue
+
+          // Parse owner (field 4)
+          const ownerKey = Utils.toHex(result.fields[4] as number[])
+          if (ownerKey.length !== 66) continue // 33 bytes = 66 hex chars
+
+          // Parse metadata if present (field 5)
+          let metadata = undefined
+          if (result.fields.length >= 6) {
+            try {
+              const metadataStr = Utils.toUTF8(result.fields[5] as number[])
+              metadata = JSON.parse(metadataStr)
+            } catch {
+              // Ignore invalid metadata
+            }
+          }
+
+          console.log(`   ✓ Found PushDrop token output at index ${outputIndex}:`)
+          console.log(`     Token ID: ${tokenId}`)
+          console.log(`     Amount: ${amount}`)
+          console.log(`     Owner: ${ownerKey}`)
+          console.log(`     Locking Key: ${lockingKey}`)
+
+          // Store in database
+          await storage.storeToken(
+            txid,
+            outputIndex,
+            tokenId,
+            amount,
+            metadata,
+            output.lockingScript.toHex(),
+            output.satoshis || 0,
+            ownerKey
+          )
+
+          tokensFound++
+        } catch (parseError: any) {
+          // Not a valid PushDrop token output, skip silently
+          continue
         }
       }
 

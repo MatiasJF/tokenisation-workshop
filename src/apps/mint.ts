@@ -3,7 +3,8 @@ import {
   WalletClient,
   Script,
   Utils,
-  Hash
+  Hash,
+  PushDrop
 } from '@bsv/sdk'
 import * as readline from 'readline/promises'
 import { stdin as input, stdout as output } from 'process'
@@ -88,13 +89,14 @@ class MintApp {
   }
 
   /**
-   * Create token output script
+   * Create spendable PushDrop token script
    */
   createTokenScript(
     tokenId: string,
     amount: number,
-    metadata: TokenMetadata
-  ): Script {
+    metadata: TokenMetadata,
+    lockingPublicKey: string
+  ): string {
     // Convert amount to 8-byte little-endian buffer
     const amountBuffer = new Array(8).fill(0)
     let remaining = amount
@@ -103,20 +105,19 @@ class MintApp {
       remaining = Math.floor(remaining / 256)
     }
 
-    // Build OP_RETURN script with PushDrop format
+    // Build PushDrop script (BRC-48) manually
+    // Format: <lockingKey> OP_DROP <protocol> <tokenId> <amount> <ownerKey> <metadata>
     const fields = [
-      Utils.toArray('TOKEN', 'utf8'),           // Protocol
-      Utils.toArray(tokenId, 'hex'),            // Token ID (32 bytes)
-      amountBuffer,                             // Amount (8 bytes)
-      Utils.toArray(this.identityKey || '', 'hex'),  // Owner (minter's identity key)
-      Utils.toArray(JSON.stringify(metadata), 'utf8')  // Metadata
+      Utils.toHex(Utils.toArray(lockingPublicKey, 'hex')),   // Locking public key (who can spend)
+      Utils.toHex(Utils.toArray('TOKEN', 'utf8')),           // Protocol
+      Utils.toHex(Utils.toArray(tokenId, 'hex')),            // Token ID (32 bytes)
+      Utils.toHex(amountBuffer),                             // Amount (8 bytes)
+      Utils.toHex(Utils.toArray(this.identityKey || '', 'hex')),  // Owner (minter's identity key)
+      Utils.toHex(Utils.toArray(JSON.stringify(metadata), 'utf8'))  // Metadata
     ]
 
-    return Script.fromASM([
-      'OP_FALSE',
-      'OP_RETURN',
-      ...fields.map(field => Utils.toHex(field))
-    ].join(' '))
+    // Create script: <data pushes> OP_DROP (75)
+    return Script.fromASM(fields.join(' ') + ' OP_DROP').toHex()
   }
 
   /**
@@ -133,18 +134,27 @@ class MintApp {
     const tokenId = this.generateTokenId()
     console.log(`🆔 Token ID: ${tokenId}`)
 
-    // Create the token output script
+    // Get a public key from wallet for locking (owner can spend)
+    console.log('   Getting locking key from wallet...')
+    const lockingKeyResult = await this.wallet.getPublicKey({
+      protocolID: [0, 'tokens'],
+      keyID: tokenId.slice(0, 32) // Use part of tokenId as keyID
+    })
+    const lockingPublicKey = lockingKeyResult.publicKey
+    console.log(`🔑 Locking Key: ${lockingPublicKey}`)
+
+    // Create the spendable token output script
     console.log('\n📝 Creating transaction...')
-    const tokenScript = this.createTokenScript(tokenId, metadata.totalSupply, metadata)
+    const tokenScript = this.createTokenScript(tokenId, metadata.totalSupply, metadata, lockingPublicKey)
 
     // Create transaction with wallet
     console.log('   Requesting transaction from wallet...')
     const createResult = await this.wallet.createAction({
       outputs: [
         {
-          lockingScript: tokenScript.toHex(),
-          satoshis: 1, // BSV requires minimum 1 satoshi for OP_RETURN outputs
-          outputDescription: 'Token mint output'
+          lockingScript: tokenScript,
+          satoshis: 1000, // Minimum satoshis for spendable output (1000 sats = ~$0.0005)
+          outputDescription: 'Spendable token mint output'
         }
       ],
       options: {

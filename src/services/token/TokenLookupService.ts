@@ -33,24 +33,31 @@ class TokenLookupService implements LookupService {
       const output = tx.outputs[payload.outputIndex]
       const txid = (payload as any).txid || tx.id('hex') as string
 
-      // Decode token data
+      // Decode token data (PushDrop format)
       const result = PushDrop.decode({
         script: output.lockingScript.toHex(),
         fieldFormat: 'buffer'
       } as any)
 
-      const tokenId = Utils.toHex(result.fields[1] as number[])
-      const amountBuffer = result.fields[2] as number[]
+      // Field 0: lockingKey (who can spend)
+      // Field 1: protocol ('TOKEN')
+      // Field 2: tokenId
+      // Field 3: amount
+      // Field 4: ownerKey (who owns)
+      // Field 5: metadata (optional)
+
+      const tokenId = Utils.toHex(result.fields[2] as number[])
+      const amountBuffer = result.fields[3] as number[]
       const amount = this.parseAmount(amountBuffer)
 
-      // Parse owner (field 3)
-      const ownerKey = result.fields.length >= 4 ? Utils.toHex(result.fields[3] as number[]) : undefined
+      // Parse owner (field 4)
+      const ownerKey = result.fields.length >= 5 ? Utils.toHex(result.fields[4] as number[]) : undefined
 
-      // Parse metadata if present (field 4)
+      // Parse metadata if present (field 5)
       let metadata = undefined
-      if (result.fields.length >= 5) {
+      if (result.fields.length >= 6) {
         try {
-          const metadataStr = Utils.toUTF8(result.fields[4] as number[])
+          const metadataStr = Utils.toUTF8(result.fields[5] as number[])
           metadata = JSON.parse(metadataStr)
         } catch {
           // Ignore invalid metadata

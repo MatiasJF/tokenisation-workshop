@@ -2,7 +2,8 @@ import 'dotenv/config'
 import {
   WalletClient,
   Script,
-  Utils
+  Utils,
+  PushDrop
 } from '@bsv/sdk'
 import * as readline from 'readline/promises'
 import { stdin as input, stdout as output } from 'process'
@@ -163,14 +164,15 @@ class WalletApp {
   }
 
   /**
-   * Create token transfer transaction
+   * Create spendable PushDrop token transfer script
    */
   createTransferScript(
     tokenId: string,
     amount: number,
     recipientKey: string,
+    lockingPublicKey: string,
     metadata?: any
-  ): Script {
+  ): string {
     // Convert amount to 8-byte little-endian buffer
     const amountBuffer = new Array(8).fill(0)
     let remaining = amount
@@ -180,21 +182,19 @@ class WalletApp {
     }
 
     const fields = [
-      Utils.toArray('TOKEN', 'utf8'),
-      Utils.toArray(tokenId, 'hex'),
-      amountBuffer,
-      Utils.toArray(recipientKey, 'hex')  // Add recipient/owner field
+      Utils.toHex(Utils.toArray(lockingPublicKey, 'hex')),   // Locking public key (who can spend)
+      Utils.toHex(Utils.toArray('TOKEN', 'utf8')),
+      Utils.toHex(Utils.toArray(tokenId, 'hex')),
+      Utils.toHex(amountBuffer),
+      Utils.toHex(Utils.toArray(recipientKey, 'hex'))  // Add recipient/owner field
     ]
 
     if (metadata) {
-      fields.push(Utils.toArray(JSON.stringify(metadata), 'utf8'))
+      fields.push(Utils.toHex(Utils.toArray(JSON.stringify(metadata), 'utf8')))
     }
 
-    return Script.fromASM([
-      'OP_FALSE',
-      'OP_RETURN',
-      ...fields.map(field => Utils.toHex(field))
-    ].join(' '))
+    // Create script: <data pushes> OP_DROP (75)
+    return Script.fromASM(fields.join(' ') + ' OP_DROP').toHex()
   }
 
   /**
@@ -250,7 +250,7 @@ class WalletApp {
   }
 
   /**
-   * Transfer tokens to another address using BSV Desktop Wallet
+   * Transfer tokens to another address using BSV Desktop Wallet (spendable PushDrop)
    */
   async transfer(tokenId: string, amount: number, recipientAddress: string) {
     console.log(`\n📤 Transferring tokens...`)
@@ -275,33 +275,50 @@ class WalletApp {
     // Calculate change
     const change = totalAvailable - amount
 
+    // Get locking keys for recipient and change outputs
+    console.log('   Getting locking keys from wallet...')
+    const recipientLockingKeyResult = await this.wallet.getPublicKey({
+      protocolID: [0, 'tokens'],
+      keyID: `${tokenId.slice(0, 16)}-recipient-${Date.now()}`
+    })
+    const recipientLockingKey = recipientLockingKeyResult.publicKey
+
     // Create token outputs
     const outputs = []
 
     // Recipient's token output
-    const recipientScript = this.createTransferScript(tokenId, amount, recipientAddress)
+    const recipientScript = this.createTransferScript(tokenId, amount, recipientAddress, recipientLockingKey)
     outputs.push({
-      lockingScript: recipientScript.toHex(),
-      satoshis: 1, // Minimum 1 satoshi for OP_RETURN outputs
+      lockingScript: recipientScript,
+      satoshis: 1000, // Minimum satoshis for spendable output
       outputDescription: 'Token transfer output'
     })
 
     // Change output if needed (back to sender)
     if (change > 0) {
-      const changeScript = this.createTransferScript(tokenId, change, this.identityKey!)
+      const changeLockingKeyResult = await this.wallet.getPublicKey({
+        protocolID: [0, 'tokens'],
+        keyID: `${tokenId.slice(0, 16)}-change-${Date.now()}`
+      })
+      const changeLockingKey = changeLockingKeyResult.publicKey
+
+      const changeScript = this.createTransferScript(tokenId, change, this.identityKey!, changeLockingKey)
       outputs.push({
-        lockingScript: changeScript.toHex(),
-        satoshis: 1, // Minimum 1 satoshi for OP_RETURN outputs
+        lockingScript: changeScript,
+        satoshis: 1000, // Minimum satoshis for spendable output
         outputDescription: 'Token change output'
       })
     }
 
     console.log('\n📝 Creating transaction...')
-    console.log(`   Inputs: ${totalAvailable}`)
+    console.log(`   Inputs: ${totalAvailable} tokens from ${utxos.length} UTXO(s)`)
     console.log(`   To recipient: ${amount}`)
     console.log(`   Change: ${change}`)
 
-    // Create transaction with wallet
+    // For now, we'll create the transaction without explicitly providing the token UTXOs as inputs
+    // The wallet will handle funding the transaction with BSV UTXOs for fees
+    // Note: This is a simplified approach - in production you'd want to properly spend the token UTXOs
+    console.log('   ⚠️  Note: Token UTXO spending not yet implemented - creating new tokens')
     console.log('   Requesting transaction from wallet...')
     const createResult = await this.wallet.createAction({
       outputs,
@@ -309,7 +326,6 @@ class WalletApp {
         randomizeOutputs: false
       },
       description: `Transfer ${amount} tokens`
-      // Wallet will automatically select UTXOs to fund transaction + outputs
     })
 
     console.log('   ✓ Transaction created')

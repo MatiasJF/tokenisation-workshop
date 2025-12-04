@@ -4,11 +4,13 @@ import { Transaction, PushDrop, Utils } from '@bsv/sdk'
 /**
  * TokenTopicManager validates token transactions for the overlay.
  *
- * Token Protocol:
- * - Output format: OP_0 OP_RETURN <protocol> <tokenId> <amount> [<metadata>]
+ * Token Protocol (PushDrop - BRC-48):
+ * - Output format: <lockingKey> OP_DROP <protocol> <tokenId> <amount> <ownerKey> [<metadata>]
+ * - lockingKey: 33-byte compressed public key (who can spend this UTXO)
  * - protocol: 'TOKEN' (UTF-8)
  * - tokenId: 32-byte hex identifier
- * - amount: 8-byte integer (satoshis represent token amount)
+ * - amount: 8-byte integer (token amount)
+ * - ownerKey: 33-byte identity key (who owns these tokens)
  * - metadata: optional JSON data
  */
 export default class TokenTopicManager implements TopicManager {
@@ -34,14 +36,20 @@ export default class TokenTopicManager implements TopicManager {
             fieldFormat: 'buffer'
           } as any)
 
-          // Validate token protocol
-          if (result.fields.length < 3) continue
+          // Validate token protocol (PushDrop has lockingKey as field 0)
+          if (result.fields.length < 5) continue // Need at least: lockingKey, protocol, tokenId, amount, ownerKey
 
-          const protocol = Utils.toUTF8(result.fields[0] as number[])
+          const lockingKey = Utils.toHex(result.fields[0] as number[])
+          const protocol = Utils.toUTF8(result.fields[1] as number[])
+
           if (protocol !== 'TOKEN') continue
 
-          const tokenId = Utils.toHex(result.fields[1] as number[])
-          const amountBuffer = result.fields[2] as number[]
+          // Validate lockingKey (33 bytes compressed public key)
+          if (lockingKey.length !== 66) continue
+
+          const tokenId = Utils.toHex(result.fields[2] as number[])
+          const amountBuffer = result.fields[3] as number[]
+          const ownerKey = Utils.toHex(result.fields[4] as number[])
 
           // Validate tokenId (32 bytes)
           if (tokenId.length !== 64) continue
@@ -49,14 +57,17 @@ export default class TokenTopicManager implements TopicManager {
           // Validate amount (8 bytes)
           if (amountBuffer.length !== 8) continue
 
+          // Validate ownerKey (33 bytes compressed public key)
+          if (ownerKey.length !== 66) continue
+
           // Parse amount as 64-bit integer
           const amount = this.parseAmount(amountBuffer)
           if (amount <= 0) continue
 
-          // Optional metadata validation
-          if (result.fields.length >= 4) {
+          // Optional metadata validation (field 5)
+          if (result.fields.length >= 6) {
             try {
-              const metadata = Utils.toUTF8(result.fields[3] as number[])
+              const metadata = Utils.toUTF8(result.fields[5] as number[])
               JSON.parse(metadata) // Ensure valid JSON
             } catch {
               // Invalid metadata, skip
@@ -95,31 +106,42 @@ export default class TokenTopicManager implements TopicManager {
   }
 
   async getDocumentation(): Promise<string> {
-    return `# Token Overlay Service
+    return `# Token Overlay Service (Spendable PushDrop)
 
 ## Purpose
-Validates and tracks fungible token transactions on the BSV blockchain.
+Validates and tracks fungible token transactions on the BSV blockchain using spendable PushDrop (BRC-48) outputs.
 
 ## Token Protocol
 
-### Output Format
+### Output Format (PushDrop - BRC-48)
 \`\`\`
-OP_0 OP_RETURN <protocol> <tokenId> <amount> [<metadata>]
+<lockingKey> OP_DROP <protocol> <tokenId> <amount> <ownerKey> [<metadata>]
 \`\`\`
 
 ### Fields
+- **lockingKey**: 33-byte compressed public key (who can spend this UTXO)
 - **protocol**: 'TOKEN' (UTF-8 string)
 - **tokenId**: 32-byte hex identifier (unique per token type)
 - **amount**: 8-byte integer (token units, little-endian)
+- **ownerKey**: 33-byte identity key (who owns these tokens)
 - **metadata**: Optional JSON object with token information
+
+### Spendable Tokens
+Unlike OP_RETURN, PushDrop tokens are **spendable UTXOs**:
+- Can be spent as inputs in transactions
+- Require signature from the lockingKey to spend
+- Contain both token data AND value (satoshis)
+- Enable true P2P token transfers
 
 ### Examples
 
 #### Mint New Token
 \`\`\`
+lockingKey: '02ea3bcf...' (33 bytes - minter's public key)
 protocol: 'TOKEN'
 tokenId: 'a1b2c3d4...' (32 bytes)
 amount: 1000000 (1 million tokens)
+ownerKey: '02ea3bcf...' (33 bytes - minter's identity key)
 metadata: {
   "name": "Workshop Token",
   "symbol": "WST",
@@ -130,22 +152,27 @@ metadata: {
 
 #### Transfer Token
 \`\`\`
+lockingKey: '03b1b8a7...' (33 bytes - recipient's public key)
 protocol: 'TOKEN'
 tokenId: 'a1b2c3d4...' (same as minted)
 amount: 50000 (50k tokens)
-metadata: {} (optional)
+ownerKey: '03b1b8a7...' (33 bytes - recipient's identity key)
+metadata: {} (inherited from mint)
 \`\`\`
 
 ## Validation Rules
-1. Protocol must be 'TOKEN'
-2. TokenId must be exactly 32 bytes
-3. Amount must be 8 bytes and greater than 0
-4. Metadata must be valid JSON if present
-5. Outputs not matching these rules are rejected
+1. Must have at least 5 fields (lockingKey, protocol, tokenId, amount, ownerKey)
+2. LockingKey must be exactly 33 bytes (compressed public key)
+3. Protocol must be 'TOKEN'
+4. TokenId must be exactly 32 bytes
+5. Amount must be 8 bytes and greater than 0
+6. OwnerKey must be exactly 33 bytes (compressed public key)
+7. Metadata must be valid JSON if present
+8. Outputs not matching these rules are rejected
 
 ## Usage
-- Mint Service: Creates new token outputs
-- Wallet Service: Transfers tokens between addresses
+- Mint Service: Creates new spendable token UTXOs
+- Wallet Service: Spends token UTXOs and creates new outputs for recipients
 - Lookup Service: Queries balances and transaction history
 `
   }
