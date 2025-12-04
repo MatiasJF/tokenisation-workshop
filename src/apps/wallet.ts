@@ -165,14 +165,14 @@ class WalletApp {
 
   /**
    * Create spendable PushDrop token transfer script
+   * Format: <lockingKey> OP_DROP <protocol> <tokenId> <amount> <ownerKey> <metadata> OP_DROP
    */
-  createTransferScript(
+  async createTransferScript(
     tokenId: string,
     amount: number,
     recipientKey: string,
-    lockingPublicKey: string,
     metadata?: any
-  ): string {
+  ): Promise<Script> {
     // Convert amount to 8-byte little-endian buffer
     const amountBuffer = new Array(8).fill(0)
     let remaining = amount
@@ -181,20 +181,43 @@ class WalletApp {
       remaining = Math.floor(remaining / 256)
     }
 
-    const fields = [
-      Utils.toHex(Utils.toArray(lockingPublicKey, 'hex')),   // Locking public key (who can spend)
-      Utils.toHex(Utils.toArray('TOKEN', 'utf8')),
-      Utils.toHex(Utils.toArray(tokenId, 'hex')),
-      Utils.toHex(amountBuffer),
-      Utils.toHex(Utils.toArray(recipientKey, 'hex'))  // Add recipient/owner field
-    ]
+    // Get locking key from wallet
+    const lockingKeyResult = await this.wallet.getPublicKey({
+      protocolID: [0, 'tokens'],
+      keyID: `${tokenId.slice(0, 16)}-${Date.now()}`
+    })
+    const lockingPublicKey = lockingKeyResult.publicKey
 
+    // Build PushDrop script manually with OP_DROP
+    const script = new Script()
+
+    // Push locking key (33 bytes)
+    script.writeBin(Utils.toArray(lockingPublicKey, 'hex'))
+
+    // OP_DROP (0x75)
+    script.writeOpCode(117)
+
+    // Push protocol
+    script.writeBin(Utils.toArray('TOKEN', 'utf8'))
+
+    // Push tokenId
+    script.writeBin(Utils.toArray(tokenId, 'hex'))
+
+    // Push amount
+    script.writeBin(amountBuffer)
+
+    // Push recipient key
+    script.writeBin(Utils.toArray(recipientKey, 'hex'))
+
+    // Push metadata if provided
     if (metadata) {
-      fields.push(Utils.toHex(Utils.toArray(JSON.stringify(metadata), 'utf8')))
+      script.writeBin(Utils.toArray(JSON.stringify(metadata), 'utf8'))
     }
 
-    // Create script: <data pushes> OP_DROP (75)
-    return Script.fromASM(fields.join(' ') + ' OP_DROP').toHex()
+    // OP_DROP (0x75)
+    script.writeOpCode(117)
+
+    return script
   }
 
   /**
@@ -275,38 +298,27 @@ class WalletApp {
     // Calculate change
     const change = totalAvailable - amount
 
-    // Get locking keys for recipient and change outputs
-    console.log('   Getting locking keys from wallet...')
-    const recipientLockingKeyResult = await this.wallet.getPublicKey({
-      protocolID: [0, 'tokens'],
-      keyID: `${tokenId.slice(0, 16)}-recipient-${Date.now()}`
-    })
-    const recipientLockingKey = recipientLockingKeyResult.publicKey
-
-    // Create token outputs
+    // Create token outputs using PushDrop
+    console.log('   Creating PushDrop token outputs...')
     const outputs = []
 
     // Recipient's token output
-    const recipientScript = this.createTransferScript(tokenId, amount, recipientAddress, recipientLockingKey)
+    const recipientScript = await this.createTransferScript(tokenId, amount, recipientAddress)
     outputs.push({
-      lockingScript: recipientScript,
+      lockingScript: recipientScript.toHex(),
       satoshis: 1000, // Minimum satoshis for spendable output
-      outputDescription: 'Token transfer output'
+      outputDescription: 'PushDrop token transfer',
+      basket: 'tokens'
     })
 
     // Change output if needed (back to sender)
     if (change > 0) {
-      const changeLockingKeyResult = await this.wallet.getPublicKey({
-        protocolID: [0, 'tokens'],
-        keyID: `${tokenId.slice(0, 16)}-change-${Date.now()}`
-      })
-      const changeLockingKey = changeLockingKeyResult.publicKey
-
-      const changeScript = this.createTransferScript(tokenId, change, this.identityKey!, changeLockingKey)
+      const changeScript = await this.createTransferScript(tokenId, change, this.identityKey!)
       outputs.push({
-        lockingScript: changeScript,
+        lockingScript: changeScript.toHex(),
         satoshis: 1000, // Minimum satoshis for spendable output
-        outputDescription: 'Token change output'
+        outputDescription: 'PushDrop token change',
+        basket: 'tokens'
       })
     }
 

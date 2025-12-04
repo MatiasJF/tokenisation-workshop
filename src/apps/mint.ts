@@ -90,13 +90,13 @@ class MintApp {
 
   /**
    * Create spendable PushDrop token script
+   * Format: <lockingKey> OP_DROP <protocol> <tokenId> <amount> <ownerKey> <metadata> OP_DROP
    */
-  createTokenScript(
+  async createTokenScript(
     tokenId: string,
     amount: number,
-    metadata: TokenMetadata,
-    lockingPublicKey: string
-  ): string {
+    metadata: TokenMetadata
+  ): Promise<Script> {
     // Convert amount to 8-byte little-endian buffer
     const amountBuffer = new Array(8).fill(0)
     let remaining = amount
@@ -105,19 +105,42 @@ class MintApp {
       remaining = Math.floor(remaining / 256)
     }
 
-    // Build PushDrop script (BRC-48) manually
-    // Format: <lockingKey> OP_DROP <protocol> <tokenId> <amount> <ownerKey> <metadata>
-    const fields = [
-      Utils.toHex(Utils.toArray(lockingPublicKey, 'hex')),   // Locking public key (who can spend)
-      Utils.toHex(Utils.toArray('TOKEN', 'utf8')),           // Protocol
-      Utils.toHex(Utils.toArray(tokenId, 'hex')),            // Token ID (32 bytes)
-      Utils.toHex(amountBuffer),                             // Amount (8 bytes)
-      Utils.toHex(Utils.toArray(this.identityKey || '', 'hex')),  // Owner (minter's identity key)
-      Utils.toHex(Utils.toArray(JSON.stringify(metadata), 'utf8'))  // Metadata
-    ]
+    // Get locking key from wallet
+    const lockingKeyResult = await this.wallet.getPublicKey({
+      protocolID: [0, 'tokens'],
+      keyID: tokenId.slice(0, 32)
+    })
+    const lockingPublicKey = lockingKeyResult.publicKey
 
-    // Create script: <data pushes> OP_DROP (75)
-    return Script.fromASM(fields.join(' ') + ' OP_DROP').toHex()
+    // Build PushDrop script manually with OP_DROP
+    // Format: <lockingKey> OP_DROP <data fields> OP_DROP
+    const script = new Script()
+
+    // Push locking key (33 bytes)
+    script.writeBin(Utils.toArray(lockingPublicKey, 'hex'))
+
+    // OP_DROP (0x75)
+    script.writeOpCode(117)
+
+    // Push protocol
+    script.writeBin(Utils.toArray('TOKEN', 'utf8'))
+
+    // Push tokenId
+    script.writeBin(Utils.toArray(tokenId, 'hex'))
+
+    // Push amount
+    script.writeBin(amountBuffer)
+
+    // Push owner key
+    script.writeBin(Utils.toArray(this.identityKey || '', 'hex'))
+
+    // Push metadata
+    script.writeBin(Utils.toArray(JSON.stringify(metadata), 'utf8'))
+
+    // OP_DROP (0x75)
+    script.writeOpCode(117)
+
+    return script
   }
 
   /**
@@ -134,27 +157,19 @@ class MintApp {
     const tokenId = this.generateTokenId()
     console.log(`🆔 Token ID: ${tokenId}`)
 
-    // Get a public key from wallet for locking (owner can spend)
-    console.log('   Getting locking key from wallet...')
-    const lockingKeyResult = await this.wallet.getPublicKey({
-      protocolID: [0, 'tokens'],
-      keyID: tokenId.slice(0, 32) // Use part of tokenId as keyID
-    })
-    const lockingPublicKey = lockingKeyResult.publicKey
-    console.log(`🔑 Locking Key: ${lockingPublicKey}`)
-
-    // Create the spendable token output script
+    // Create the spendable token output script using PushDrop
     console.log('\n📝 Creating transaction...')
-    const tokenScript = this.createTokenScript(tokenId, metadata.totalSupply, metadata, lockingPublicKey)
+    const tokenScript = await this.createTokenScript(tokenId, metadata.totalSupply, metadata)
 
     // Create transaction with wallet
     console.log('   Requesting transaction from wallet...')
     const createResult = await this.wallet.createAction({
       outputs: [
         {
-          lockingScript: tokenScript,
+          lockingScript: tokenScript.toHex(),
           satoshis: 1000, // Minimum satoshis for spendable output (1000 sats = ~$0.0005)
-          outputDescription: 'Spendable token mint output'
+          outputDescription: 'Spendable PushDrop token mint',
+          basket: 'tokens'
         }
       ],
       options: {

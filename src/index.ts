@@ -152,31 +152,29 @@ async function main() {
 
         try {
           // Try to decode as PushDrop token
-          const result = PushDrop.decode({
-            script: output.lockingScript.toHex(),
-            fieldFormat: 'buffer'
-          } as any)
+          // IMPORTANT: PushDrop.decode() expects a Script object, not a hex string
+          const result = PushDrop.decode(output.lockingScript)
 
           // Validate PushDrop token format
-          // Field 0: lockingKey (33 bytes)
-          // Field 1: protocol ('TOKEN')
-          // Field 2: tokenId (32 bytes)
-          // Field 3: amount (8 bytes)
-          // Field 4: ownerKey (33 bytes)
-          // Field 5: metadata (optional JSON)
-          if (result.fields.length < 5) continue
+          // PushDrop.decode() returns: {lockingPublicKey, fields[]}
+          // Field 0: protocol ('TOKEN')
+          // Field 1: tokenId (32 bytes)
+          // Field 2: amount (8 bytes)
+          // Field 3: ownerKey (33 bytes)
+          // Field 4: metadata (optional JSON)
+          if (result.fields.length < 4) continue
 
-          const lockingKey = Utils.toHex(result.fields[0] as number[])
-          const protocol = Utils.toUTF8(result.fields[1] as number[])
+          const lockingKey = result.lockingPublicKey.toString()
+          const protocol = Utils.toUTF8(result.fields[0] as number[])
 
           if (protocol !== 'TOKEN') continue
           if (lockingKey.length !== 66) continue // 33 bytes = 66 hex chars
 
-          const tokenId = Utils.toHex(result.fields[2] as number[])
+          const tokenId = Utils.toHex(result.fields[1] as number[])
           if (tokenId.length !== 64) continue // 32 bytes = 64 hex chars
 
           // Parse amount (8-byte little-endian)
-          const amountBytes = result.fields[3] as number[]
+          const amountBytes = result.fields[2] as number[]
           if (amountBytes.length !== 8) continue
 
           let amount = 0
@@ -186,15 +184,15 @@ async function main() {
 
           if (amount <= 0) continue
 
-          // Parse owner (field 4)
-          const ownerKey = Utils.toHex(result.fields[4] as number[])
+          // Parse owner (field 3)
+          const ownerKey = Utils.toHex(result.fields[3] as number[])
           if (ownerKey.length !== 66) continue // 33 bytes = 66 hex chars
 
-          // Parse metadata if present (field 5)
+          // Parse metadata if present (field 4)
           let metadata = undefined
-          if (result.fields.length >= 6) {
+          if (result.fields.length >= 5) {
             try {
-              const metadataStr = Utils.toUTF8(result.fields[5] as number[])
+              const metadataStr = Utils.toUTF8(result.fields[4] as number[])
               metadata = JSON.parse(metadataStr)
             } catch {
               // Ignore invalid metadata
