@@ -41,21 +41,23 @@ Every UTXO can be considered a token because it:
 
 ### What is PushDrop?
 
-PushDrop is a script template pattern that allows data to be embedded in **spendable** outputs. Unlike OP_RETURN (which creates unspendable outputs), PushDrop outputs can be transferred. The PushDrop implementation is available in the @bsv/sdk package as a standard template for creating and redeeming tokens with arbitrary signed payloads stored on the stack.
+**PushDrop (BRC-48)** - "Pay to Push Drop" is an official BSV Blockchain standard that establishes a script template enabling "data-rich tokens on the Bitcoin SV blockchain, while still allowing for the representation of transfers of ownership."
+
+According to BRC-48, PushDrop addresses the need for tokenization methods that surpass OP_RETURN limitations by allowing developers to embed arbitrary metadata within **spendable UTXOs**, facilitating improved scalability through graph-based token modeling.
 
 ### Script Structure
 
-**Locking Script Format**:
+**BRC-48 Locking Script Format**:
 ```
-<lockingPublicKey> OP_DROP <dataFields...> OP_DROP
+<arbitrary data> <arbitrary data> <arbitrary data> OP_DROP OP_2DROP <public key> OP_CHECKSIG
 ```
 
 **How It Works**:
-1. The script includes a public key for ownership verification
-2. `OP_DROP` (opcode 0x75) removes data from the stack during execution
-3. Multiple data fields can be pushed (protocol identifier, token ID, amount, owner, metadata)
-4. Another `OP_DROP` removes the remaining data fields
-5. The script structure allows the output to remain spendable while preserving data
+1. Arbitrary data elements are pushed onto the stack
+2. `OP_DROP` (opcode 0x75) and `OP_2DROP` operations remove the data from the stack
+3. A Pay-to-Public-Key (P2PK) lock with a public key remains
+4. `OP_CHECKSIG` verifies the signature during spending
+5. The output remains spendable (minimum 1 satoshi) while metadata persists across transactions
 
 ### Why PushDrop for Tokens?
 
@@ -83,10 +85,11 @@ A typical PushDrop token contains:
 
 ### Unlocking Requirements
 
-To spend (transfer) a PushDrop token:
-1. Provide a valid signature from the private key matching the locking key
-2. Provide the public key for verification
-3. The script must verify: signature matches public key, and public key matches locking key
+To spend (transfer) a PushDrop token per BRC-48:
+1. Create an unlocking script containing a valid digital signature
+2. The signature must be from the private key corresponding to the public key in the locking script
+3. During execution, `OP_CHECKSIG` verifies the signature matches the public key
+4. Ownership transfer occurs when the signature verification succeeds
 
 ---
 
@@ -486,7 +489,7 @@ Wallets use hierarchical deterministic (HD) key derivation:
 
 **Overlay**: Off-chain indexing layer for blockchain data discovery
 
-**PushDrop**: Script template pattern for creating spendable data-carrying outputs
+**PushDrop**: Pay to Push Drop (BRC-48) - script template for creating spendable data-rich token outputs
 
 **SPV**: Simple Payment Verification - lightweight transaction verification method described in Bitcoin whitepaper section 8
 
@@ -514,9 +517,10 @@ Understanding the interplay between wallets (transaction creation), overlays (di
 
 ## References
 
-- **BRC-45**: UTXOs as Tokens specification
-- **BRC-46**: Wallet Transaction Output Tracking (Output Baskets)
-- **BRC-62**: Background Evaluation Extended Format (BEEF) Transactions
+- **BRC-45**: UTXOs as Tokens specification - https://bsv.brc.dev/wallet/0100
+- **BRC-46**: Wallet Transaction Output Tracking (Output Baskets) - https://bsv.brc.dev/wallet/0100
+- **BRC-48**: Pay to Push Drop (PushDrop) script template - https://bsv.brc.dev/scripts/0048
+- **BRC-62**: Background Evaluation Extended Format (BEEF) Transactions - https://bsv.brc.dev/transactions/0062
 - **Bitcoin Whitepaper Section 8**: Simplified Payment Verification
 - **BSV SDK**: @bsv/sdk package with PushDrop template implementation
 - **BSV Blockchain Technical Standards**: https://bsv.brc.dev/
