@@ -1,7 +1,7 @@
-# BSV Token Theory: PushDrop, Overlays, and P2P Transfers
+# BSV Blockchain Token Theory: PushDrop, Overlays, and P2P Transfers
 
 ## Table of Contents
-1. [Introduction to BSV Tokens](#introduction-to-bsv-tokens)
+1. [Introduction to BSV Blockchain Tokens](#introduction-to-bsv-blockchain-tokens)
 2. [The PushDrop Pattern](#the-pushdrop-pattern)
 3. [Token Lifecycle](#token-lifecycle)
 4. [Overlay Networks](#overlay-networks)
@@ -12,11 +12,11 @@
 
 ---
 
-## Introduction to BSV Tokens
+## Introduction to BSV Blockchain Tokens
 
-### What Are BSV Tokens?
+### What Are BSV Blockchain Tokens?
 
-In Bitcoin SV, tokens are **unspent transaction outputs (UTXOs)** with special data embedded in their locking scripts. Unlike other blockchain systems that use smart contracts or account-based models, BSV tokens are native to the UTXO model.
+On the BSV Blockchain, tokens are **unspent transaction outputs (UTXOs)** with special data embedded in their locking scripts. Unlike other blockchain systems that use smart contracts or account-based models, BSV Blockchain tokens are native to the UTXO model.
 
 **Core Principle**: "Outputs are tokens" (BRC-45)
 
@@ -29,10 +29,10 @@ Every UTXO can be considered a token because it:
 
 ### Why UTXOs as Tokens?
 
-1. **Native Security**: Uses Bitcoin's proven UTXO model and mining security
+1. **Native Security**: Uses the proven UTXO model and mining security of the BSV Blockchain
 2. **No Smart Contract Complexity**: No separate token contract layer needed
 3. **Parallel Processing**: Different tokens can be processed simultaneously
-4. **SPV Verification**: Lightweight clients can verify ownership without full blockchain
+4. **SPV Verification**: Lightweight clients can verify ownership without downloading the full blockchain
 5. **Privacy**: Each token output can use different keys
 
 ---
@@ -41,7 +41,7 @@ Every UTXO can be considered a token because it:
 
 ### What is PushDrop?
 
-PushDrop (BRC-48) is a Bitcoin Script pattern that allows data to be embedded in **spendable** outputs. Unlike OP_RETURN (which creates unspendable outputs), PushDrop outputs can be transferred.
+PushDrop is a script template pattern that allows data to be embedded in **spendable** outputs. Unlike OP_RETURN (which creates unspendable outputs), PushDrop outputs can be transferred. The PushDrop implementation is available in the @bsv/sdk package as a standard template for creating and redeeming tokens with arbitrary signed payloads stored on the stack.
 
 ### Script Structure
 
@@ -51,11 +51,11 @@ PushDrop (BRC-48) is a Bitcoin Script pattern that allows data to be embedded in
 ```
 
 **How It Works**:
-1. The script starts with a public key that "locks" the output
-2. `OP_DROP` removes data from the stack without affecting execution
+1. The script includes a public key for ownership verification
+2. `OP_DROP` (opcode 0x75) removes data from the stack during execution
 3. Multiple data fields can be pushed (protocol identifier, token ID, amount, owner, metadata)
-4. Another `OP_DROP` removes the data fields
-5. The remaining script can verify signatures/ownership
+4. Another `OP_DROP` removes the remaining data fields
+5. The script structure allows the output to remain spendable while preserving data
 
 ### Why PushDrop for Tokens?
 
@@ -99,7 +99,7 @@ To spend (transfer) a PushDrop token:
 - Create token metadata (name, symbol, supply, etc.)
 - Build PushDrop locking script with initial supply and owner
 - Create transaction with wallet (wallet selects satoshi UTXOs for fees)
-- Broadcast to BSV network
+- Broadcast to BSV Blockchain network
 - Submit to overlay for indexing
 
 **Key Points**:
@@ -187,13 +187,15 @@ Overlays are **untrusted**:
 
 ### What is BEEF?
 
-**BEEF** = Binary Extended Envelope Format (BRC-62)
+**BEEF** = **Background Evaluation Extended Format** (BRC-62)
 
-A compact format that contains:
-- Transaction data
-- Merkle proof paths
-- Block headers (optional)
-- Ancestor transaction data
+BEEF is a binary format designed for transmitting Bitcoin transactions between peers while enabling Simple Payment Verification (SPV). According to the BRC-62 specification, BEEF combines thinking from several formats into one binary stream optimized for minimal bandwidth while maintaining data necessary for independent transaction validation.
+
+A BEEF structure contains:
+- Transaction data in standard BRC-12 raw transaction format
+- BSV Unified Merkle Paths (BUMPs) for proving transaction inclusion in blocks
+- Transactions ordered by topological sorting (Khan's algorithm)
+- Version identifier: `0100BEEF` (version 4022206465 as 32-bit little-endian integer)
 
 ### Why BEEF?
 
@@ -207,14 +209,15 @@ A compact format that contains:
 
 ### SPV Verification
 
-**Simple Payment Verification** allows lightweight verification:
+**Simple Payment Verification** (SPV) is described in section 8 of the Bitcoin whitepaper. SPV allows lightweight verification by utilizing Merkle proofs:
 
-1. **Step 1**: Check transaction is well-formed
-2. **Step 2**: Verify merkle proof shows transaction in block
-3. **Step 3**: Verify block header has valid proof of work
-4. **Step 4**: Check sufficient confirmations (block depth)
+1. **Download Block Headers**: SPV clients only download block headers (much smaller than full blocks)
+2. **Request Merkle Branch**: To verify a transaction, request a proof of inclusion (Merkle branch)
+3. **Verify Merkle Proof**: Use the longest chain of block headers and the Merkle branch to perform a Merkle proof
+4. **Match Merkle Root**: Match the proof result against the Merkle Root in the block header
+5. **Confirm Block Depth**: Check sufficient confirmations (block depth) for security
 
-**Result**: Cryptographic certainty transaction is valid without full blockchain
+**Result**: Cryptographic proof that a transaction is included in a specific block without examining all transactions in that block. This significantly reduces data requirements, making SPV suitable for mobile wallets and enabling network scalability.
 
 ### BEEF in Token Transfers
 
@@ -243,15 +246,16 @@ When spending a token UTXO:
 
 ### Baskets (BRC-46)
 
-**Output Baskets** are logical groupings of UTXOs:
-- Default basket: general satoshi outputs
-- Custom baskets: application-specific outputs (e.g., "tokens")
-- Each basket tracks outputs with metadata
+**Wallet Transaction Output Tracking (Output Baskets)** - BRC-46 establishes baskets as conceptual containers for grouping UTXOs, creating an easy-to-manage structure for tracking specific outputs used across applications or protocols.
 
-**Basket Purpose**:
-- Organize outputs by use case
-- Prevent accidental spending of special outputs
-- Simplify UTXO management
+**Basket Functionality**:
+- Return transaction outputs from specific baskets
+- Customize outputs with relevant instructions (tags, custom data)
+- Support spending or relinquishing tracked outputs
+- Organize outputs by use case (e.g., "tokens" basket)
+- Prevent accidental spending of application-specific outputs
+
+**Permission Model**: Per BRC-43, wallets must ensure user consent before listing outputs from baskets, creating transactions that insert outputs into baskets, or internalizing transactions for output insertion.
 
 ### Key Derivation
 
@@ -270,7 +274,7 @@ Wallets use hierarchical deterministic (HD) key derivation:
 3. **Output Generation**: Wallet creates outputs based on request
 4. **Fee Calculation**: Wallet calculates and adds miner fees
 5. **Signing**: Wallet signs inputs with appropriate keys
-6. **Broadcast**: Wallet broadcasts to BSV network
+6. **Broadcast**: Wallet broadcasts to BSV Blockchain network
 7. **Tracking**: Wallet stores transaction for future reference
 
 ---
@@ -304,7 +308,7 @@ Wallets use hierarchical deterministic (HD) key derivation:
 
 #### Phase 3: Broadcast and Indexing
 
-1. Submit signed transaction to BSV network
+1. Submit signed transaction to BSV Blockchain network
 2. Transaction validated by miners
 3. Included in next block
 4. Submit TXID to overlay for indexing
@@ -455,51 +459,64 @@ Wallets use hierarchical deterministic (HD) key derivation:
 
 ### Standardization
 
-- **BRC-20 equivalent**: Community-agreed token standard
+- **Token standards**: Community-agreed standards through BRC process
 - **Metadata schemas**: Standard JSON formats for different token types
 - **Overlay APIs**: Standardized query interfaces
-- **Cross-platform compatibility**: Tokens work across all BSV applications
+- **Cross-platform compatibility**: Tokens work across all BSV Blockchain applications
 
 ---
 
 ## Glossary
 
-**AtomicBEEF**: Byte array representation of BEEF format
+**AtomicBEEF**: Byte array representation of BEEF format used in transaction transmission
 
-**Basket**: Logical grouping of outputs in a wallet
+**Basket**: Conceptual container for grouping UTXOs in a wallet (BRC-46)
 
-**BEEF**: Binary Extended Envelope Format - compact transaction proof data
+**BEEF**: Background Evaluation Extended Format - binary format for SPV transaction transmission (BRC-62)
 
-**BRC**: Bitcoin Request for Comment - BSV standards
+**BRC**: Bitcoin Request for Comment - BSV Blockchain standards process managed by the Technical Standards Committee
+
+**BUMP**: BSV Unified Merkle Path - proof format for transaction inclusion in blocks
 
 **Locking Script**: Script that defines spending conditions for a UTXO
 
-**Merkle Proof**: Cryptographic proof a transaction is in a block
+**Merkle Proof**: Cryptographic proof that a transaction is included in a specific block
 
-**OP_DROP**: Bitcoin opcode that removes top stack element
+**OP_DROP**: Bitcoin opcode (0x75) that removes top stack element during script execution
 
-**Overlay**: Off-chain indexing layer for blockchain data
+**Overlay**: Off-chain indexing layer for blockchain data discovery
 
-**PushDrop**: Script pattern for spendable data outputs
+**PushDrop**: Script template pattern for creating spendable data-carrying outputs
 
-**SPV**: Simple Payment Verification - lightweight transaction verification
+**SPV**: Simple Payment Verification - lightweight transaction verification method described in Bitcoin whitepaper section 8
 
-**UTXO**: Unspent Transaction Output - Bitcoin's fundamental unit
+**UTXO**: Unspent Transaction Output - fundamental unit in the Bitcoin UTXO model
 
-**Unlocking Script**: Script that satisfies locking script conditions
+**Unlocking Script**: Script that satisfies locking script conditions to spend a UTXO
 
 ---
 
 ## Conclusion
 
-BSV token implementation using PushDrop and overlays represents a powerful approach to tokenization that:
+BSV Blockchain token implementation using PushDrop and overlays represents a powerful approach to tokenization that:
 
-- Leverages Bitcoin's native UTXO model
-- Maintains security through SPV verification
+- Leverages the native UTXO model proven by Bitcoin
+- Maintains security through SPV verification as described in the Bitcoin whitepaper
 - Enables peer-to-peer transfers without intermediaries
-- Provides efficient discovery through overlay indexing
+- Provides efficient discovery through overlay indexing layers
 - Supports complex token logic through Bitcoin Script
 
-The key insight is that **outputs ARE tokens** - there's no separate token layer needed. By embedding data in spendable outputs and using overlays for discovery, we get a scalable, secure, and truly peer-to-peer token system.
+The key insight is that **outputs ARE tokens** (BRC-45) - there's no separate token layer needed. By embedding data in spendable outputs using the PushDrop template and using overlays for discovery, we achieve a scalable, secure, and truly peer-to-peer token system.
 
-Understanding the interplay between wallets (transaction creation), overlays (discovery), BEEF (verification), and PushDrop scripts (transfer logic) is essential for building robust token applications on BSV.
+Understanding the interplay between wallets (transaction creation), overlays (discovery), BEEF (verification), and PushDrop scripts (transfer logic) is essential for building robust token applications on the BSV Blockchain.
+
+---
+
+## References
+
+- **BRC-45**: UTXOs as Tokens specification
+- **BRC-46**: Wallet Transaction Output Tracking (Output Baskets)
+- **BRC-62**: Background Evaluation Extended Format (BEEF) Transactions
+- **Bitcoin Whitepaper Section 8**: Simplified Payment Verification
+- **BSV SDK**: @bsv/sdk package with PushDrop template implementation
+- **BSV Blockchain Technical Standards**: https://bsv.brc.dev/
