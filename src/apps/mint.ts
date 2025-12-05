@@ -4,7 +4,10 @@ import {
   Script,
   Utils,
   Hash,
-  PushDrop
+  PushDrop,
+  TopicBroadcaster,
+  Transaction,
+  LookupResolver
 } from '@bsv/sdk'
 import * as readline from 'readline/promises'
 import { stdin as input, stdout as output } from 'process'
@@ -80,6 +83,7 @@ class MintApp {
    * Generate a unique token ID (32 bytes from identity key + timestamp)
    */
   generateTokenId(): string {
+    return '0000000000000000000000000000000000000000000000000000000000000001'
     const timestamp = Date.now().toString()
     const combined = (this.identityKey || 'default') + timestamp
 
@@ -98,47 +102,21 @@ class MintApp {
     metadata: TokenMetadata
   ): Promise<Script> {
     // Convert amount to 8-byte little-endian buffer
-    const amountBuffer = new Array(8).fill(0)
-    let remaining = amount
-    for (let i = 0; i < 8; i++) {
-      amountBuffer[i] = remaining % 256
-      remaining = Math.floor(remaining / 256)
-    }
+    const aWriter = new Utils.Writer()
+    aWriter.writeUInt64LE(amount)
+    const amountArr = aWriter.toArray()
 
-    // Get locking key from wallet
-    const lockingKeyResult = await this.wallet.getPublicKey({
-      protocolID: [0, 'tokens'],
-      keyID: tokenId.slice(0, 32)
-    })
-    const lockingPublicKey = lockingKeyResult.publicKey
+    const fields = [
+      Utils.toArray('TOKEN', 'utf8'),
+      Utils.toArray(tokenId, 'hex'),
+      amountArr,
+      Utils.toArray(JSON.stringify(metadata), 'utf8')
+    ]
 
     // Build PushDrop script manually with OP_DROP
-    // Format: <lockingKey> OP_DROP <data fields> OP_DROP
-    const script = new Script()
-
-    // Push locking key (33 bytes)
-    script.writeBin(Utils.toArray(lockingPublicKey, 'hex'))
-
-    // OP_DROP (0x75)
-    script.writeOpCode(117)
-
-    // Push protocol
-    script.writeBin(Utils.toArray('TOKEN', 'utf8'))
-
-    // Push tokenId
-    script.writeBin(Utils.toArray(tokenId, 'hex'))
-
-    // Push amount
-    script.writeBin(amountBuffer)
-
-    // Push owner key
-    script.writeBin(Utils.toArray(this.identityKey || '', 'hex'))
-
-    // Push metadata
-    script.writeBin(Utils.toArray(JSON.stringify(metadata), 'utf8'))
-
-    // OP_DROP (0x75)
-    script.writeOpCode(117)
+    // Format: <data> OP_DROPS <lockingKey>
+    const token = new PushDrop(this.wallet, ORIGINATOR)
+    const script = await token.lock(fields, [0, 'workshop tokens'], 'mint-output', 'self', true, true)
 
     return script
   }
@@ -151,88 +129,65 @@ class MintApp {
     tokenId: string
     amount: number
   }> {
-    console.log('\n🪙  Minting new token...')
+    try {
+      console.log('\n🪙  Minting new token...')
 
-    // Generate unique token ID
-    const tokenId = this.generateTokenId()
-    console.log(`🆔 Token ID: ${tokenId}`)
+      // Generate unique token ID
+      const tokenId = this.generateTokenId()
+      console.log(`🆔 Token ID: ${tokenId}`)
 
-    // Create the spendable token output script using PushDrop
-    console.log('\n📝 Creating transaction...')
-    const tokenScript = await this.createTokenScript(tokenId, metadata.totalSupply, metadata)
+      // Create the spendable token output script using PushDrop
+      console.log('\n📝 Creating transaction...')
+      const tokenScript = await this.createTokenScript(tokenId, metadata.totalSupply, metadata)
 
-    // Create transaction with wallet
-    console.log('   Requesting transaction from wallet...')
-    const createResult = await this.wallet.createAction({
-      outputs: [
-        {
-          lockingScript: tokenScript.toHex(),
-          satoshis: 1000, // Minimum satoshis for spendable output (1000 sats = ~$0.0005)
-          outputDescription: 'Spendable PushDrop token mint',
-          basket: 'tokens'
-        }
-      ],
-      options: {
-        randomizeOutputs: false
-      },
-      description: `Mint ${metadata.name} (${metadata.symbol})`
-      // Wallet will automatically select UTXOs to fund transaction + outputs
-    })
-
-    console.log('   ✓ Transaction created')
-
-    // Check if transaction was signed and broadcast automatically
-    if (createResult.txid) {
-      console.log('\n✅ Transaction broadcast successful!')
-      console.log(`   TXID: ${createResult.txid}`)
-
-      const txid = createResult.txid
-
-      // Show blockchain explorer link
-      const explorerUrl = `https://whatsonchain.com/tx/${txid}`
-      console.log(`   Explorer: ${explorerUrl}`)
-
-      // Submit to overlay
-      await this.submitToOverlay(txid)
-
-      return {
-        txid,
-        tokenId,
-        amount: metadata.totalSupply
-      }
-    } else if (createResult.signableTransaction) {
-      // Transaction needs manual signing
-      console.log('\n📡 Signing and broadcasting...')
-      console.log('   (Check your BSV Desktop Wallet for approval dialog)')
-
-      const signResult = await this.wallet.signAction({
-        spends: {},
-        reference: createResult.signableTransaction.reference
+      // Create transaction with wallet
+      console.log('   Requesting transaction from wallet...')
+      const createResult = await this.wallet.createAction({
+        outputs: [
+          {
+            lockingScript: tokenScript.toHex(),
+            satoshis: 1,
+            outputDescription: 'Spendable PushDrop token mint',
+            basket: 'workshop tokens',
+            tags: ['workshop', 'mint']
+          }
+        ],
+        options: {
+          randomizeOutputs: false,
+          // noSend: true
+        },
+        labels: ['workshop', 'mint'],
+        description: `Mint ${metadata.name} (${metadata.symbol})`
+        // Wallet will automatically select UTXOs to fund transaction + outputs
       })
 
-      const txid = signResult.txid
-
+      const txid = createResult.txid
       if (!txid) {
         throw new Error('No TXID returned from wallet')
       }
 
-      console.log(`\n✅ Transaction broadcast successful!`)
-      console.log(`   TXID: ${txid}`)
+      const tx = Transaction.fromBEEF(createResult.tx as number[])
 
-      // Show blockchain explorer link
-      const explorerUrl = `https://whatsonchain.com/tx/${txid}`
-      console.log(`   Explorer: ${explorerUrl}`)
+      const headers = {
+        'Content-Type': 'application/octet-stream',
+        'X-Topics': JSON.stringify(['tm_tokens'])
+      }
 
-      // Submit to overlay
-      await this.submitToOverlay(txid)
+      const response = await (await fetch(OVERLAY_URL + '/submit', {
+        method: 'post',
+        headers,
+        body: new Uint8Array(tx.toBEEF())
+      })).json()
+      console.log(response)
 
       return {
         txid,
         tokenId,
         amount: metadata.totalSupply
       }
-    } else {
-      throw new Error('Unexpected createAction result: no txid or signableTransaction')
+    } catch (error: any) {
+      console.error('Error minting token:', error)
+      throw error
     }
   }
 

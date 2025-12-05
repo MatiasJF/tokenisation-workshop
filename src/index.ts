@@ -1,269 +1,89 @@
-import 'dotenv/config'
+import { WalletAdvertiser } from '@bsv/overlay-discovery-services'
 import OverlayExpress from '@bsv/overlay-express'
-import TokenTopicManager from './services/token/TokenTopicManager.js'
-import createTokenLookupService from './services/token/TokenLookupService.js'
-import TokenStorageManager from './services/token/TokenStorageManager.js'
-import { MongoClient } from 'mongodb'
-import { PushDrop } from '@bsv/sdk'
+import TokenTopicManager from './services/token/TokenTopicManager'
+import TokenLookupService from './services/token/TokenLookupService'
+import { config } from 'dotenv'
+import packageJson from '../package.json'
+config()
 
 const {
   NODE_NAME = 'tokenworkshop',
   SERVER_PRIVATE_KEY,
-  HOSTING_URL = 'http://localhost:8080',
+  HOSTING_URL = 'https://deggen.ngrok.app',
   ADMIN_TOKEN = 'admin',
   MONGO_URL = 'mongodb://localhost:27017/tokenworkshop',
   KNEX_URL = 'mysql://root:password@localhost:3306/tokenworkshop',
   GASP_ENABLED = 'false'
 } = process.env
 
-if (!SERVER_PRIVATE_KEY) {
-  throw new Error('SERVER_PRIVATE_KEY environment variable is required')
-}
+// Hi there! Let's configure Overlay Express!
+const main = async () => {
 
-async function main() {
-  console.log('🚀 Starting Tokenisation Workshop Overlay Server...')
+    // We'll make a new server for our overlay node.
+    const server = new OverlayExpress(
 
-  // Create OverlayExpress server
-  const server = new OverlayExpress(
-    NODE_NAME,
-    SERVER_PRIVATE_KEY as string,
-    HOSTING_URL,
-    ADMIN_TOKEN
-  )
+        // Name your overlay node with a one-word lowercase string
+        NODE_NAME!,
 
-  // Configure port (from HOSTING_URL or default 8080)
-  const port = new URL(HOSTING_URL).port || '8080'
-  server.configurePort(Number(port))
+        // Provide the private key that gives your node its identity
+        SERVER_PRIVATE_KEY!,
 
-  // Configure databases using OverlayExpress methods
-  await server.configureKnex(KNEX_URL)
-  console.log('✓ MySQL/Knex connected')
+        // Provide the HTTPS URL where your node is available on the internet
+        HOSTING_URL!,
+        
+        // Provide an adminToken to enable the admin API
+        ADMIN_TOKEN!
+    )
 
-  await server.configureMongo(MONGO_URL)
-  console.log('✓ MongoDB connected')
+    const wa = new WalletAdvertiser(
+        'main',
+        SERVER_PRIVATE_KEY!,
+        'https://storage.babbage.systems',
+        'https://deggen.ngrok.app'
+    )
 
-  // Create persistent MongoDB client for custom endpoints
-  const persistentMongoClient = new MongoClient(MONGO_URL)
-  await persistentMongoClient.connect()
-  const dbName = MONGO_URL.split('/').pop()?.split('?')[0] || 'tokenworkshop'
-  const lookupDbName = `${dbName}_lookup_services`
-  const persistentDb = persistentMongoClient.db(lookupDbName)
+    await wa.init()
 
-  // Configure body parser middleware for JSON
-  server.app.use((await import('express')).json())
-
-  // Register Token Service
-  server.configureTopicManager('tm_tokens', new TokenTopicManager())
-  server.configureLookupServiceWithMongo('ls_tokens', createTokenLookupService as any)
-
-  console.log('✓ Token service registered')
-
-  // Configure GASP sync based on environment variable
-  const enableGasp = GASP_ENABLED === 'true'
-  server.configureEnableGASPSync(enableGasp)
-
-  if (enableGasp) {
-    console.log('✅ GASP synchronization enabled - tokens will be automatically tracked')
-  } else {
-    console.log('⚠️  GASP synchronization disabled - manual token insertion required')
-  }
-
-  // Configure the overlay engine
-  await server.configureEngine()
-
-  // Add custom endpoint for health check
-  server.app.get('/health', async (req, res) => {
-    res.json({
-      status: 'healthy',
-      node: NODE_NAME,
-      services: ['tokens'],
-      timestamp: new Date().toISOString()
+    server.configureEngineParams({
+        advertiser: wa
     })
-  })
 
-  // Add custom endpoint for token balances (bypasses overlay engine enrichment)
-  server.app.get('/token-balances', async (req, res) => {
-    try {
-      const ownerKey = req.query.ownerKey as string | undefined
+    // Set the ARC API key
+    server.configureArcApiKey(process.env.ARC_API_KEY!)
 
-      const storage = new TokenStorageManager(persistentDb)
-      const balances = await storage.getAllBalances(ownerKey)
+    // Decide what port you want the server to listen on.
+    server.configurePort(8080)
 
-      res.json(balances)
-    } catch (error: any) {
-      console.error('Error in /token-balances:', error)
-      res.status(500).json({ error: error.message })
-    }
-  })
+    // Connect to your SQL database with Knex
+    await server.configureKnex(KNEX_URL!)
 
-  // Add custom endpoint for token UTXOs (bypasses overlay engine enrichment)
-  server.app.get('/token-utxos/:tokenId', async (req, res) => {
-    try {
-      const { tokenId } = req.params
+    // Also, be sure to connect to MongoDB
+    await server.configureMongo(MONGO_URL!)
 
-      const storage = new TokenStorageManager(persistentDb)
-      const records = await storage.findUnspentByTokenId(tokenId)
+    // Here, you will configure the overlay topic managers and lookup services you want.
+    // - Topic managers decide what outputs can go in your overlay
+    // - Lookup services help people find things in your overlay
+    
+    // Protocols
+    server.configureTopicManager('tm_tokens', new TokenTopicManager())
+    server.configureLookupServiceWithMongo('ls_tokens', TokenLookupService)
 
-      // Map to UTXO format expected by wallet
-      const utxos = records.map(r => ({
-        txid: r.txid,
-        outputIndex: r.outputIndex,
-        amount: r.amount,
-        lockingScript: r.lockingScript,
-        satoshis: r.satoshis
-      }))
+    // For simple local deployments, sync can be disabled.
+    server.configureEnableGASPSync(process.env?.GASP_ENABLED === 'true')
 
-      res.json(utxos)
-    } catch (error: any) {
-      console.error('Error in /token-utxos:', error)
-      res.status(500).json({ error: error.message })
-    }
-  })
+    // Lastly, configure the engine and start the server!
+    await server.configureEngine()
 
-  // Add custom endpoint for direct token submission (for workshop - bypasses GASP)
-  server.app.post('/submit-token', async (req, res) => {
-    try {
-      const { txid } = req.body
+    // Configure verbose request logging
+    server.configureVerboseRequestLogging(true)
 
-      if (!txid) {
-        return res.status(400).json({ error: 'txid is required' })
-      }
+    server.app.get('/version', (req, res) => {
+        res.json(packageJson)
+    })
 
-      console.log(`\n📥 Direct token submission received for TXID: ${txid}`)
-
-      // Fetch transaction from blockchain
-      const wocResponse = await fetch(`https://api.whatsonchain.com/v1/bsv/main/tx/${txid}/hex`)
-      if (!wocResponse.ok) {
-        return res.status(404).json({ error: 'Transaction not found on blockchain' })
-      }
-
-      const rawTx = await wocResponse.text()
-      const { Transaction, Utils } = await import('@bsv/sdk')
-      const tx = Transaction.fromHex(rawTx)
-
-      console.log(`   Parsing transaction with ${tx.outputs.length} outputs...`)
-
-      // Parse each output looking for token outputs
-      let tokensFound = 0
-      const storage = new TokenStorageManager(persistentDb)
-
-      for (let outputIndex = 0; outputIndex < tx.outputs.length; outputIndex++) {
-        const output = tx.outputs[outputIndex]
-
-        try {
-          // Try to decode as PushDrop token
-          // IMPORTANT: PushDrop.decode() expects a Script object, not a hex string
-          const result = PushDrop.decode(output.lockingScript)
-
-          // Validate PushDrop token format
-          // PushDrop.decode() returns: {lockingPublicKey, fields[]}
-          // Field 0: protocol ('TOKEN')
-          // Field 1: tokenId (32 bytes)
-          // Field 2: amount (8 bytes)
-          // Field 3: ownerKey (33 bytes)
-          // Field 4: metadata (optional JSON)
-          if (result.fields.length < 4) continue
-
-          const lockingKey = result.lockingPublicKey.toString()
-          const protocol = Utils.toUTF8(result.fields[0] as number[])
-
-          if (protocol !== 'TOKEN') continue
-          if (lockingKey.length !== 66) continue // 33 bytes = 66 hex chars
-
-          const tokenId = Utils.toHex(result.fields[1] as number[])
-          if (tokenId.length !== 64) continue // 32 bytes = 64 hex chars
-
-          // Parse amount (8-byte little-endian)
-          const amountBytes = result.fields[2] as number[]
-          if (amountBytes.length !== 8) continue
-
-          let amount = 0
-          for (let i = 0; i < 8; i++) {
-            amount += amountBytes[i] * Math.pow(256, i)
-          }
-
-          if (amount <= 0) continue
-
-          // Parse owner (field 3)
-          const ownerKey = Utils.toHex(result.fields[3] as number[])
-          if (ownerKey.length !== 66) continue // 33 bytes = 66 hex chars
-
-          // Parse metadata if present (field 4)
-          let metadata = undefined
-          if (result.fields.length >= 5) {
-            try {
-              const metadataStr = Utils.toUTF8(result.fields[4] as number[])
-              metadata = JSON.parse(metadataStr)
-            } catch {
-              // Ignore invalid metadata
-            }
-          }
-
-          console.log(`   ✓ Found PushDrop token output at index ${outputIndex}:`)
-          console.log(`     Token ID: ${tokenId}`)
-          console.log(`     Amount: ${amount}`)
-          console.log(`     Owner: ${ownerKey}`)
-          console.log(`     Locking Key: ${lockingKey}`)
-
-          // Store in database
-          await storage.storeToken(
-            txid,
-            outputIndex,
-            tokenId,
-            amount,
-            metadata,
-            output.lockingScript.toHex(),
-            output.satoshis || 0,
-            ownerKey
-          )
-
-          tokensFound++
-        } catch (parseError: any) {
-          // Not a valid PushDrop token output, skip silently
-          continue
-        }
-      }
-
-      if (tokensFound > 0) {
-        console.log(`   ✅ Successfully stored ${tokensFound} token output(s)`)
-        res.json({
-          status: 'success',
-          txid,
-          tokensFound,
-          message: `Successfully indexed ${tokensFound} token output(s)`
-        })
-      } else {
-        console.log(`   ⚠️  No token outputs found in transaction`)
-        res.status(400).json({
-          error: 'No token outputs found in transaction',
-          txid
-        })
-      }
-    } catch (error: any) {
-      console.error('❌ Error in /submit-token:', error)
-      res.status(500).json({ error: error.message })
-    }
-  })
-
-  // Start the server
-  await server.start()
-
-  console.log(`
-✨ Tokenisation Workshop Server Running!
-
-🌐 Overlay URL: ${HOSTING_URL}
-📦 Node Name: ${NODE_NAME}
-🎯 Services: Token Mint & Wallet
-
-Available Services:
-  - Token Topic Manager: tm_tokens
-  - Token Lookup Service: ls_tokens
-
-Health Check: ${HOSTING_URL}/health
-`)
+    // Start the server
+    await server.start()
 }
 
-main().catch(error => {
-  console.error('Failed to start server:', error)
-  process.exit(1)
-})
+// Happy hacking :)
+main()

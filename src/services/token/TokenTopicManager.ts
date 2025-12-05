@@ -1,17 +1,8 @@
 import { TopicManager, AdmittanceInstructions } from '@bsv/overlay'
-import { Transaction, PushDrop, Utils } from '@bsv/sdk'
+import { Transaction, PushDrop, Utils, BigNumber } from '@bsv/sdk'
 
 /**
  * TokenTopicManager validates token transactions for the overlay.
- *
- * Token Protocol (PushDrop - BRC-48):
- * - Output format: <lockingKey> OP_DROP <protocol> <tokenId> <amount> <ownerKey> [<metadata>]
- * - lockingKey: 33-byte compressed public key (who can spend this UTXO)
- * - protocol: 'TOKEN' (UTF-8)
- * - tokenId: 32-byte hex identifier
- * - amount: 8-byte integer (token amount)
- * - ownerKey: 33-byte identity key (who owns these tokens)
- * - metadata: optional JSON data
  */
 export default class TokenTopicManager implements TopicManager {
 
@@ -19,6 +10,7 @@ export default class TokenTopicManager implements TopicManager {
     beef: number[],
     previousCoins: number[]
   ): Promise<AdmittanceInstructions> {
+    console.log('Identifying admissible outputs...')
     const outputsToAdmit: number[] = []
 
     try {
@@ -31,55 +23,66 @@ export default class TokenTopicManager implements TopicManager {
           const output = tx.outputs[i]
 
           // Decode using PushDrop (BRC-48)
-          const result = PushDrop.decode({
-            script: output.lockingScript.toHex(),
-            fieldFormat: 'buffer'
-          } as any)
+          const { fields } = PushDrop.decode(output.lockingScript)
 
           // Validate token protocol (PushDrop has lockingKey as field 0)
-          if (result.fields.length < 5) continue // Need at least: lockingKey, protocol, tokenId, amount, ownerKey
+          if (fields.length < 5) {
+            console.log(`Output ${i}: Rejected - insufficient fields (need at least 5, got ${fields.length})`)
+            continue
+          }
 
-          const lockingKey = Utils.toHex(result.fields[0] as number[])
-          const protocol = Utils.toUTF8(result.fields[1] as number[])
+          const field0Value = Utils.toUTF8(fields[0])
+          if (field0Value !== 'TOKEN') {
+            console.log(`Output ${i}: Rejected - field[0] is not 'TOKEN' (got '${field0Value}')`)
+            continue
+          }
 
-          if (protocol !== 'TOKEN') continue
+          const field1Value = Utils.toHex(fields[1])
+          if (field1Value !== '0000000000000000000000000000000000000000000000000000000000000001') {
+            console.log(`Output ${i}: Rejected - field[1] tokenId mismatch (expected '0000000000000000000000000000000000000000000000000000000000000001', got '${field1Value}')`)
+            continue
+          }
 
-          // Validate lockingKey (33 bytes compressed public key)
-          if (lockingKey.length !== 66) continue
+          const reader = new Utils.Reader(fields[2])
+          const amount = reader.readUInt64LEBn()
+          if (amount < new BigNumber(0) || amount > new BigNumber(BigInt(Number.MAX_SAFE_INTEGER))) {
+            console.log(`Output ${i}: Rejected - amount out of range (got ${amount.toString()})`)
+            continue
+          }
 
-          const tokenId = Utils.toHex(result.fields[2] as number[])
-          const amountBuffer = result.fields[3] as number[]
-          const ownerKey = Utils.toHex(result.fields[4] as number[])
+          const jsonMetadata = JSON.parse(Utils.toUTF8(fields[3]))
+          if (!jsonMetadata) {
+            console.log(`Output ${i}: Rejected - no metadata found`)
+            continue
+          }
 
-          // Validate tokenId (32 bytes)
-          if (tokenId.length !== 64) continue
+          if (jsonMetadata.name !== 'goose') {
+            console.log(`Output ${i}: Rejected - metadata.name is not 'goose' (got '${jsonMetadata.name}')`)
+            continue
+          }
 
-          // Validate amount (8 bytes)
-          if (amountBuffer.length !== 8) continue
+          if (jsonMetadata.symbol !== 'GOOSE') {
+            console.log(`Output ${i}: Rejected - metadata.symbol is not 'GOOSE' (got '${jsonMetadata.symbol}')`)
+            continue
+          }
 
-          // Validate ownerKey (33 bytes compressed public key)
-          if (ownerKey.length !== 66) continue
+          if (jsonMetadata.decimals !== 5) {
+            console.log(`Output ${i}: Rejected - metadata.decimals is not 5 (got ${jsonMetadata.decimals})`)
+            continue
+          }
 
-          // Parse amount as 64-bit integer
-          const amount = this.parseAmount(amountBuffer)
-          if (amount <= 0) continue
-
-          // Optional metadata validation (field 5)
-          if (result.fields.length >= 6) {
-            try {
-              const metadata = Utils.toUTF8(result.fields[5] as number[])
-              JSON.parse(metadata) // Ensure valid JSON
-            } catch {
-              // Invalid metadata, skip
-              continue
-            }
+          if (jsonMetadata.description !== 'something nice') {
+            console.log(`Output ${i}: Rejected - metadata.description is not 'something nice' (got '${jsonMetadata.description}')`)
+            continue
           }
 
           // Output is valid
+          console.log(`Output ${i}: ACCEPTED - all validation checks passed`)
           outputsToAdmit.push(i)
 
         } catch (err) {
           // Skip invalid outputs silently
+          console.log(`Output ${i}: Rejected - error during processing: ${err}`)
           continue
         }
       }
