@@ -47,27 +47,27 @@ PushDrop (BRC-48) is a Bitcoin Script pattern that allows data to be embedded in
 
 **Locking Script Format**:
 ```
-<lockingPublicKey> OP_DROP <dataFields...> OP_DROP
+<data...> OP_DROP <lockingPublicKey> OP_CHECKIG
 ```
 
 **How It Works**:
 1. The script starts with a public key that "locks" the output
-2. `OP_DROP` removes data from the stack without affecting execution
+2. A push data followed by an `OP_DROP` simply adds adds data from the stack and then removes it therefore leaving locking conditions unaffected.
 3. Multiple data fields can be pushed (protocol identifier, token ID, amount, owner, metadata)
-4. Another `OP_DROP` removes the data fields
-5. The remaining script can verify signatures/ownership
+4. A series of `OP_DROP`s or `OP_2DROP`s removes the data fields
+5. The remaining script can comprise whatever locking conditions are required.
 
 ### Why PushDrop for Tokens?
 
 **Traditional OP_RETURN Problems**:
-- Creates unspendable outputs (burns satoshis)
-- Cannot be transferred - token is "destroyed" when created
+- Creates unspendable outputs (0 satoshis) we can refer to as "markers"
+- Cannot be spent, since script execution will always result in FALSE
 - No way to implement token transfers on-chain
 
 **PushDrop Advantages**:
 - Outputs remain spendable
-- Data is preserved in locking script
-- Can be transferred like any UTXO
+- Data is immutable since it's within the tx.
+- The token be transferred like any UTXO
 - Supports complex token logic
 
 ### Token Script Anatomy
@@ -85,8 +85,7 @@ A typical PushDrop token contains:
 
 To spend (transfer) a PushDrop token:
 1. Provide a valid signature from the private key matching the locking key
-2. Provide the public key for verification
-3. The script must verify: signature matches public key, and public key matches locking key
+2. The script must verify: signature is from the public key in the locking script.
 
 ---
 
@@ -104,9 +103,9 @@ To spend (transfer) a PushDrop token:
 
 **Key Points**:
 - Wallet handles satoshi input selection automatically
-- Token output contains 1000 satoshis minimum (dust limit)
+- Token output contains 1 satoshi minimum to be spendable
 - Transaction is validated by miners and included in a block
-- Overlay indexes the token for discovery
+- Overlay indexes the token to enforce any needed rules
 
 ### 2. Discovery
 
