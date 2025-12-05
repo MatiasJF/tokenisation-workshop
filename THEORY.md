@@ -41,7 +41,7 @@ Every UTXO can be considered a token because it:
 
 ### What is PushDrop?
 
-**PushDrop (BRC-48)** - "Pay to Push Drop" is an official BSV Blockchain standard that establishes a script template enabling "data-rich tokens on the Bitcoin SV blockchain, while still allowing for the representation of transfers of ownership."
+**PushDrop (BRC-48)** - "Pay to Push Drop" is an official BSV Blockchain standard that establishes a script template enabling "data-rich tokens on the BSV blockchain, while still allowing for the representation of transfers of ownership."
 
 According to BRC-48, PushDrop addresses the need for tokenization methods that surpass OP_RETURN limitations by allowing developers to embed arbitrary metadata within **spendable UTXOs**, facilitating improved scalability through graph-based token modeling.
 
