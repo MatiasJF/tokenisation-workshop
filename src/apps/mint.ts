@@ -98,47 +98,21 @@ class MintApp {
     metadata: TokenMetadata
   ): Promise<Script> {
     // Convert amount to 8-byte little-endian buffer
-    const amountBuffer = new Array(8).fill(0)
-    let remaining = amount
-    for (let i = 0; i < 8; i++) {
-      amountBuffer[i] = remaining % 256
-      remaining = Math.floor(remaining / 256)
-    }
+    const aWriter = new Utils.Writer()
+    aWriter.writeUInt64LE(amount)
+    const amountArr = aWriter.toArray()
 
-    // Get locking key from wallet
-    const lockingKeyResult = await this.wallet.getPublicKey({
-      protocolID: [0, 'tokens'],
-      keyID: tokenId.slice(0, 32)
-    })
-    const lockingPublicKey = lockingKeyResult.publicKey
+    const fields = [
+      Utils.toArray('TOKEN', 'utf8'),
+      Utils.toArray(tokenId, 'hex'),
+      amountArr,
+      Utils.toArray(JSON.stringify(metadata), 'utf8')
+    ]
 
     // Build PushDrop script manually with OP_DROP
-    // Format: <lockingKey> OP_DROP <data fields> OP_DROP
-    const script = new Script()
-
-    // Push locking key (33 bytes)
-    script.writeBin(Utils.toArray(lockingPublicKey, 'hex'))
-
-    // OP_DROP (0x75)
-    script.writeOpCode(117)
-
-    // Push protocol
-    script.writeBin(Utils.toArray('TOKEN', 'utf8'))
-
-    // Push tokenId
-    script.writeBin(Utils.toArray(tokenId, 'hex'))
-
-    // Push amount
-    script.writeBin(amountBuffer)
-
-    // Push owner key
-    script.writeBin(Utils.toArray(this.identityKey || '', 'hex'))
-
-    // Push metadata
-    script.writeBin(Utils.toArray(JSON.stringify(metadata), 'utf8'))
-
-    // OP_DROP (0x75)
-    script.writeOpCode(117)
+    // Format: <data> OP_DROPS <lockingKey>
+    const token = new PushDrop(this.wallet, 'tokenisation-workshop.local')
+    const script = await token.lock(fields, [0, 'tokens of workshop relevance'], 'mint-output', 'self', true, true)
 
     return script
   }
@@ -167,7 +141,7 @@ class MintApp {
       outputs: [
         {
           lockingScript: tokenScript.toHex(),
-          satoshis: 1000, // Minimum satoshis for spendable output (1000 sats = ~$0.0005)
+          satoshis: 1,
           outputDescription: 'Spendable PushDrop token mint',
           basket: 'tokens'
         }
